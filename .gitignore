@@ -5,6 +5,7 @@
 *.swp
 *.tmp
 .DS_Store
+.agents/
 .atom/
 .build/
 .buildlog/
