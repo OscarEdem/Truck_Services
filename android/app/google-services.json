@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "642606796713",
+    "project_id": "cargotmate",
+    "storage_bucket": "cargotmate.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:642606796713:android:b36e8350c5cfacdd88beb8",
+        "android_client_info": {
+          "package_name": "com.example.cargomate"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBeJCnoU20gUNzaSTLAwi4VTzu-tvUUJJo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
