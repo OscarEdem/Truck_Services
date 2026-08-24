@@ -21,8 +21,8 @@ class SignUpScreen extends StatefulWidget {
 
 /// Lightweight country model (matches Sign In)
 class _Country {
-  final String name, iso2, dialCode, flag;
-  const _Country(this.name, this.iso2, this.dialCode, this.flag);
+  final String name, iso2, dialCode;
+  const _Country(this.name, this.iso2, this.dialCode);
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
@@ -54,7 +54,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _auth = FirebaseAuth.instance;
 
   final _numberCtl = TextEditingController();
-  _Country _country = const _Country('Ghana', 'GH', '233', '🇬🇭');
+  _Country _country = const _Country('Ghana', 'GH', '233');
 
   bool _sending = false;
   DateTime? _lastSendAt;
@@ -521,8 +521,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  _country.flag,
-                                  style: const TextStyle(fontSize: 18),
+                                  _country.iso2,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
@@ -741,8 +744,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         },
                         child: Text(
                           _role == 'customer'
-                              ? 'Sign Up 🚀'
-                              : 'Next: Driver KYC (1/3) ➔',
+                              ? 'Sign Up'
+                              : 'Next: Driver KYC (1/3)',
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -1068,9 +1071,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
             children: [
               Expanded(
                 child: ChoiceChip(
-                  label: const Text(
-                    '🏍️ Bike',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  label: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.two_wheeler, size: 16),
+                      SizedBox(width: 4),
+                      Text('Bike', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    ],
                   ),
                   selected: _role == 'bikeRider',
                   onSelected: (_) => setState(() {
@@ -1083,9 +1090,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: ChoiceChip(
-                  label: const Text(
-                    '🚐 Van / Truck',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  label: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.local_shipping, size: 16),
+                      SizedBox(width: 4),
+                      Text('Van / Truck', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    ],
                   ),
                   selected: _role == 'driver',
                   onSelected: (_) => setState(() => _role = 'driver'),
@@ -1195,7 +1206,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     children: [
                       Text(
                         _avatarUrl != null
-                            ? 'Profile Photo Uploaded ✅'
+                            ? 'Profile Photo Uploaded'
                             : 'Tap to select Profile Picture',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
@@ -1272,7 +1283,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     children: [
                       Text(
                         _driverSelfieUrl != null
-                            ? 'Selfie Proof Captured ✅'
+                            ? 'Selfie Proof Captured'
                             : 'Take Facial Verification Selfie',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
@@ -1356,7 +1367,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   setState(() => _currentStep = 2);
                 },
                 child: const Text(
-                  'Next: Vehicle (2/3) ➔',
+                  'Next: Vehicle (2/3)',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
@@ -1396,17 +1407,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
           segments: const [
             ButtonSegment(
               value: 'bike',
-              label: Text('🏍️ Bike'),
+              label: Text('Bike'),
               icon: Icon(Icons.two_wheeler),
             ),
             ButtonSegment(
               value: 'van',
-              label: Text('🚐 Van'),
+              label: Text('Van'),
               icon: Icon(Icons.airport_shuttle),
             ),
             ButtonSegment(
               value: 'truck',
-              label: Text('🚛 Truck'),
+              label: Text('Truck'),
               icon: Icon(Icons.local_shipping),
             ),
           ],
@@ -1553,7 +1564,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 ),
                 onPressed: _complete,
                 child: const Text(
-                  'Submit Driver Profile 🚀',
+                  'Submit Driver Profile',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
@@ -1629,17 +1640,17 @@ class _CountrySheetState extends State<_CountrySheet> {
   late List<_Country> _filtered;
 
   static const _all = <_Country>[
-    _Country('Ghana', 'GH', '233', '🇬🇭'),
-    _Country('Nigeria', 'NG', '234', '🇳🇬'),
-    _Country('Kenya', 'KE', '254', '🇰🇪'),
-    _Country('South Africa', 'ZA', '27', '🇿🇦'),
-    _Country('United Kingdom', 'GB', '44', '🇬🇧'),
-    _Country('United States', 'US', '1', '🇺🇸'),
-    _Country('Canada', 'CA', '1', '🇨🇦'),
-    _Country('France', 'FR', '33', '🇫🇷'),
-    _Country('Germany', 'DE', '49', '🇩🇪'),
-    _Country('India', 'IN', '91', '🇮🇳'),
-    _Country('UAE', 'AE', '971', '🇦🇪'),
+    _Country('Ghana', 'GH', '233'),
+    _Country('Nigeria', 'NG', '234'),
+    _Country('Kenya', 'KE', '254'),
+    _Country('South Africa', 'ZA', '27'),
+    _Country('United Kingdom', 'GB', '44'),
+    _Country('United States', 'US', '1'),
+    _Country('Canada', 'CA', '1'),
+    _Country('France', 'FR', '33'),
+    _Country('Germany', 'DE', '49'),
+    _Country('India', 'IN', '91'),
+    _Country('UAE', 'AE', '971'),
   ];
 
   @override
@@ -1702,7 +1713,14 @@ class _CountrySheetState extends State<_CountrySheet> {
                 final c = _filtered[i];
                 final isSel = c.iso2 == sel;
                 return ListTile(
-                  leading: Text(c.flag, style: const TextStyle(fontSize: 22)),
+                  leading: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(c.iso2, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                  ),
                   title: Text(c.name),
                   subtitle: Text('+${c.dialCode} • ${c.iso2}'),
                   trailing: isSel

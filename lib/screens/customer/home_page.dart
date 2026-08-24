@@ -1431,7 +1431,7 @@ class _RecentDeliveriesList extends StatelessWidget {
                               'delivered_at': FieldValue.serverTimestamp(),
                             });
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Delivery completed ✅')),
+                          const SnackBar(content: Text('Delivery completed')),
                         );
                       }
                     },

@@ -141,7 +141,7 @@ class DeliveryHelpers {
         'status': 'delivered',
         'delivered_at': FieldValue.serverTimestamp(),
       });
-      _snack(context, 'Delivery marked delivered ✅');
+      _snack(context, 'Delivery marked delivered');
     }
   }
 

@@ -17,8 +17,8 @@ class SignInScreen extends StatefulWidget {
 
 /// Lightweight country model
 class _Country {
-  final String name, iso2, dialCode, flag;
-  const _Country(this.name, this.iso2, this.dialCode, this.flag);
+  final String name, iso2, dialCode;
+  const _Country(this.name, this.iso2, this.dialCode);
 }
 
 class _SignInScreenState extends State<SignInScreen> {
@@ -26,7 +26,7 @@ class _SignInScreenState extends State<SignInScreen> {
 
   // Phone inputs
   final _numberCtl = TextEditingController();
-  _Country _country = const _Country('Ghana', 'GH', '233', '🇬🇭');
+  _Country _country = const _Country('Ghana', 'GH', '233');
 
   // OTP send state
   final _auth = FirebaseAuth.instance;
@@ -219,8 +219,11 @@ class _SignInScreenState extends State<SignInScreen> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
-                                _country.flag,
-                                style: const TextStyle(fontSize: 18),
+                                _country.iso2,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
                               ),
                               const SizedBox(width: 8),
                               Text(
@@ -342,17 +345,17 @@ class _CountrySheetState extends State<_CountrySheet> {
   late List<_Country> _filtered;
 
   static const _all = <_Country>[
-    _Country('Ghana', 'GH', '233', '🇬🇭'),
-    _Country('Nigeria', 'NG', '234', '🇳🇬'),
-    _Country('Kenya', 'KE', '254', '🇰🇪'),
-    _Country('South Africa', 'ZA', '27', '🇿🇦'),
-    _Country('United Kingdom', 'GB', '44', '🇬🇧'),
-    _Country('United States', 'US', '1', '🇺🇸'),
-    _Country('Canada', 'CA', '1', '🇨🇦'),
-    _Country('France', 'FR', '33', '🇫🇷'),
-    _Country('Germany', 'DE', '49', '🇩🇪'),
-    _Country('India', 'IN', '91', '🇮🇳'),
-    _Country('UAE', 'AE', '971', '🇦🇪'),
+    _Country('Ghana', 'GH', '233'),
+    _Country('Nigeria', 'NG', '234'),
+    _Country('Kenya', 'KE', '254'),
+    _Country('South Africa', 'ZA', '27'),
+    _Country('United Kingdom', 'GB', '44'),
+    _Country('United States', 'US', '1'),
+    _Country('Canada', 'CA', '1'),
+    _Country('France', 'FR', '33'),
+    _Country('Germany', 'DE', '49'),
+    _Country('India', 'IN', '91'),
+    _Country('UAE', 'AE', '971'),
   ];
 
   @override
@@ -415,7 +418,14 @@ class _CountrySheetState extends State<_CountrySheet> {
                 final c = _filtered[i];
                 final isSel = c.iso2 == sel;
                 return ListTile(
-                  leading: Text(c.flag, style: const TextStyle(fontSize: 22)),
+                  leading: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(c.iso2, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                  ),
                   title: Text(c.name),
                   subtitle: Text('+${c.dialCode} • ${c.iso2}'),
                   trailing: isSel

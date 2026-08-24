@@ -365,7 +365,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 );
 
                 if (docs.isEmpty) {
-                  return const Center(child: Text('Say hello 👋'));
+                  return const Center(child: Text('Say hello'));
                 }
 
                 final items = <Widget>[];
