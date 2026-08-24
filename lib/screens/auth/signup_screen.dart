@@ -450,7 +450,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       backgroundColor: Colors.white,
       body: SafeArea(
         child: LoadingOverlay(
-          show: _busy,
+          show: _busy || _isUploadingAsset,
           child: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
             child: Form(
@@ -1029,7 +1029,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     height: 50,
                     color: const Color(0xFFE2E8F0),
                     child: _avatarUrl != null
-                        ? SmartAvatar(url: _avatarUrl, name: 'Avatar', radius: 25)
+                        ? SmartAvatar(url: _avatarUrl, fallbackInitials: 'AV', radius: 25)
                         : const Icon(Icons.add_a_photo_rounded, color: Color(0xFF64748B)),
                   ),
                 ),
@@ -1078,7 +1078,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     height: 50,
                     color: const Color(0xFFE2E8F0),
                     child: _driverSelfieUrl != null
-                        ? SmartAvatar(url: _driverSelfieUrl, name: 'Selfie', radius: 25)
+                        ? SmartAvatar(url: _driverSelfieUrl, fallbackInitials: 'SF', radius: 25)
                         : const Icon(Icons.camera_front_rounded, color: Color(0xFF059669)),
                   ),
                 ),
@@ -1230,7 +1230,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       width: 80,
                       height: 80,
                       color: const Color(0xFFE2E8F0),
-                      child: SmartAvatar(url: photoUrl, name: 'Vehicle', radius: 40),
+                      child: SmartAvatar(url: photoUrl, fallbackInitials: 'VH', radius: 40),
                     ),
                   ),
                   Positioned(
