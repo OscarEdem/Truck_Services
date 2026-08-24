@@ -17,8 +17,8 @@ class SignInScreen extends StatefulWidget {
 
 /// Lightweight country model
 class _Country {
-  final String name, iso2, dialCode;
-  const _Country(this.name, this.iso2, this.dialCode);
+  final String name, iso2, dialCode, flag;
+  const _Country(this.name, this.iso2, this.dialCode, [this.flag = '']);
 }
 
 class _SignInScreenState extends State<SignInScreen> {
