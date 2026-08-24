@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -92,7 +91,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
     setState(() => _isUploadingAsset = true);
     try {
       final bytes = await image.readAsBytes();
-      final url = await ApiService.I.uploadAssetFile(bytes, image.name, purpose);
+      final url = await ApiService.I.uploadAssetFile(
+        bytes,
+        image.name,
+        purpose,
+      );
       final ext = image.name.split('.').last.toLowerCase();
       final mime = (ext == 'png') ? 'image/png' : 'image/jpeg';
       final dataUri = 'data:$mime;base64,${base64Encode(bytes)}';
@@ -209,10 +212,18 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 ListTile(
                   leading: const CircleAvatar(
                     backgroundColor: Color(0xFFEFF6FF),
-                    child: Icon(Icons.inventory_2_rounded, color: Color(0xFF2563EB)),
+                    child: Icon(
+                      Icons.inventory_2_rounded,
+                      color: Color(0xFF2563EB),
+                    ),
                   ),
-                  title: const Text('Shipper / Customer', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: const Text('Book doorstep pickups for parcels, cargo vans, or heavy freight trucks with instant price estimates.'),
+                  title: const Text(
+                    'Shipper / Customer',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: const Text(
+                    'Book doorstep pickups for parcels, cargo vans, or heavy freight trucks with instant price estimates.',
+                  ),
                   onTap: () {
                     setState(() => _role = 'customer');
                     Navigator.pop(context);
@@ -222,10 +233,18 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 ListTile(
                   leading: const CircleAvatar(
                     backgroundColor: Color(0xFFECFDF5),
-                    child: Icon(Icons.directions_bus_outlined, color: Color(0xFF059669)),
+                    child: Icon(
+                      Icons.directions_bus_outlined,
+                      color: Color(0xFF059669),
+                    ),
                   ),
-                  title: const Text('Driver & Logistics Partner', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: const Text('Earn daily fares accepting nearby delivery requests for Motorbikes, Vans, or Heavy Trucks.'),
+                  title: const Text(
+                    'Driver & Logistics Partner',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: const Text(
+                    'Earn daily fares accepting nearby delivery requests for Motorbikes, Vans, or Heavy Trucks.',
+                  ),
                   onTap: () {
                     setState(() => _role = 'driver');
                     Navigator.pop(context);
@@ -390,7 +409,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
       final savedPhone = await Prefs.I.getPhone();
       final phone = (user.phoneNumber != null && user.phoneNumber!.isNotEmpty)
           ? user.phoneNumber!
-          : ((savedPhone != null && savedPhone.isNotEmpty) ? savedPhone : _fullE164);
+          : ((savedPhone != null && savedPhone.isNotEmpty)
+                ? savedPhone
+                : _fullE164);
 
       final regRes = await ApiService.I.register(
         phone: phone,
@@ -599,14 +620,18 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     _filledField(
                       controller: _firstCtl,
                       label: 'First name',
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter first name' : null,
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'Enter first name'
+                          : null,
                       capitalization: TextCapitalization.words,
                     ),
                     const SizedBox(height: 12),
                     _filledField(
                       controller: _lastCtl,
                       label: 'Last name',
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter last name' : null,
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'Enter last name'
+                          : null,
                       capitalization: TextCapitalization.words,
                     ),
                     const SizedBox(height: 12),
@@ -617,7 +642,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       validator: (v) {
                         final s = (v ?? '').trim();
                         if (s.isEmpty) return null;
-                        return RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(s) ? null : 'Enter a valid email';
+                        return RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(s)
+                            ? null
+                            : 'Enter a valid email';
                       },
                     ),
                     const SizedBox(height: 12),
@@ -634,7 +661,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                               ? 'Tap to select'
                               : '${_dob!.year}-${_dob!.month.toString().padLeft(2, '0')}-${_dob!.day.toString().padLeft(2, '0')}',
                           style: TextStyle(
-                            color: _dob == null ? Colors.grey : Theme.of(context).colorScheme.onSurface,
+                            color: _dob == null
+                                ? Colors.grey
+                                : Theme.of(context).colorScheme.onSurface,
                           ),
                         ),
                       ),
@@ -646,7 +675,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       children: [
                         Checkbox(
                           value: _accepted,
-                          onChanged: (v) => setState(() => _accepted = v ?? false),
+                          onChanged: (v) =>
+                              setState(() => _accepted = v ?? false),
                         ),
                         Expanded(
                           child: RichText(
@@ -654,9 +684,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
                               style: Theme.of(context).textTheme.bodyMedium,
                               children: const [
                                 TextSpan(text: 'I agree to the '),
-                                TextSpan(text: 'Terms of Service', style: TextStyle(decoration: TextDecoration.underline)),
+                                TextSpan(
+                                  text: 'Terms of Service',
+                                  style: TextStyle(
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
                                 TextSpan(text: ' and '),
-                                TextSpan(text: 'Privacy Policy', style: TextStyle(decoration: TextDecoration.underline)),
+                                TextSpan(
+                                  text: 'Privacy Policy',
+                                  style: TextStyle(
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
                                 TextSpan(text: '.'),
                               ],
                             ),
@@ -672,16 +712,24 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           backgroundColor: const Color(0xFF3D5AFE),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
                         ),
                         onPressed: () {
                           if (!_formKey.currentState!.validate()) return;
                           if (!_isAdult(_dob)) {
-                            AppSnack.show(context, 'You must be at least 18 years old to continue.');
+                            AppSnack.show(
+                              context,
+                              'You must be at least 18 years old to continue.',
+                            );
                             return;
                           }
                           if (!_accepted) {
-                            AppSnack.show(context, 'Please accept the Terms to continue.');
+                            AppSnack.show(
+                              context,
+                              'Please accept the Terms to continue.',
+                            );
                             return;
                           }
 
@@ -692,8 +740,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           }
                         },
                         child: Text(
-                          _role == 'customer' ? 'Sign Up 🚀' : 'Next: Driver KYC (1/3) ➔',
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          _role == 'customer'
+                              ? 'Sign Up 🚀'
+                              : 'Next: Driver KYC (1/3) ➔',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
@@ -748,9 +801,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           _stepDot(0, '1. Identity'),
-          const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: Color(0xFF94A3B8)),
+          const Icon(
+            Icons.arrow_forward_ios_rounded,
+            size: 12,
+            color: Color(0xFF94A3B8),
+          ),
           _stepDot(1, '2. KYC Docs'),
-          const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: Color(0xFF94A3B8)),
+          const Icon(
+            Icons.arrow_forward_ios_rounded,
+            size: 12,
+            color: Color(0xFF94A3B8),
+          ),
           _stepDot(2, '3. Vehicle'),
         ],
       ),
@@ -776,7 +837,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 ? const Icon(Icons.check, size: 14, color: Colors.white)
                 : Text(
                     '${index + 1}',
-                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
           ),
         ),
@@ -802,7 +867,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
           alignment: Alignment.centerLeft,
           child: Text(
             'Account Type',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1E293B),
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -825,21 +894,41 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     decoration: BoxDecoration(
-                      color: _role == 'customer' ? Colors.white : Colors.transparent,
+                      color: _role == 'customer'
+                          ? Colors.white
+                          : Colors.transparent,
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: _role == 'customer'
-                          ? [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 2))]
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.06),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ]
                           : [],
                     ),
                     child: Center(
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.local_shipping_outlined, size: 18, color: _role == 'customer' ? const Color(0xFF2563EB) : const Color(0xFF64748B)),
+                          Icon(
+                            Icons.local_shipping_outlined,
+                            size: 18,
+                            color: _role == 'customer'
+                                ? const Color(0xFF2563EB)
+                                : const Color(0xFF64748B),
+                          ),
                           const SizedBox(width: 6),
                           Text(
                             'Ship Cargo',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _role == 'customer' ? const Color(0xFF1E40AF) : const Color(0xFF64748B)),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: _role == 'customer'
+                                  ? const Color(0xFF1E40AF)
+                                  : const Color(0xFF64748B),
+                            ),
                           ),
                         ],
                       ),
@@ -855,21 +944,41 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     decoration: BoxDecoration(
-                      color: _role != 'customer' ? Colors.white : Colors.transparent,
+                      color: _role != 'customer'
+                          ? Colors.white
+                          : Colors.transparent,
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: _role != 'customer'
-                          ? [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 2))]
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.06),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ]
                           : [],
                     ),
                     child: Center(
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.directions_bus_outlined, size: 18, color: _role != 'customer' ? const Color(0xFF059669) : const Color(0xFF64748B)),
+                          Icon(
+                            Icons.directions_bus_outlined,
+                            size: 18,
+                            color: _role != 'customer'
+                                ? const Color(0xFF059669)
+                                : const Color(0xFF64748B),
+                          ),
                           const SizedBox(width: 6),
                           Text(
                             'Drive & Earn',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _role != 'customer' ? const Color(0xFF065F46) : const Color(0xFF64748B)),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: _role != 'customer'
+                                  ? const Color(0xFF065F46)
+                                  : const Color(0xFF64748B),
+                            ),
                           ),
                         ],
                       ),
@@ -886,10 +995,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
           duration: const Duration(milliseconds: 250),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: _role == 'customer' ? const Color(0xFFEFF6FF) : const Color(0xFFECFDF5),
+            color: _role == 'customer'
+                ? const Color(0xFFEFF6FF)
+                : const Color(0xFFECFDF5),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: _role == 'customer' ? const Color(0xFF3B82F6) : const Color(0xFF10B981),
+              color: _role == 'customer'
+                  ? const Color(0xFF3B82F6)
+                  : const Color(0xFF10B981),
               width: 1.5,
             ),
           ),
@@ -899,11 +1012,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: _role == 'customer' ? const Color(0xFF2563EB) : const Color(0xFF059669),
+                  color: _role == 'customer'
+                      ? const Color(0xFF2563EB)
+                      : const Color(0xFF059669),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  _role == 'customer' ? Icons.inventory_2_rounded : Icons.badge_rounded,
+                  _role == 'customer'
+                      ? Icons.inventory_2_rounded
+                      : Icons.badge_rounded,
                   color: Colors.white,
                   size: 22,
                 ),
@@ -914,11 +1031,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _role == 'customer' ? 'Personal & Business Shipper' : 'Fleet Driver & Logistics Partner',
+                      _role == 'customer'
+                          ? 'Personal & Business Shipper'
+                          : 'Fleet Driver & Logistics Partner',
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 14,
-                        color: _role == 'customer' ? const Color(0xFF1E3A8A) : const Color(0xFF064E3B),
+                        color: _role == 'customer'
+                            ? const Color(0xFF1E3A8A)
+                            : const Color(0xFF064E3B),
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -928,7 +1049,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           : 'Accept nearby delivery jobs and earn daily income on your schedule.',
                       style: TextStyle(
                         fontSize: 11,
-                        color: _role == 'customer' ? const Color(0xFF3B82F6) : const Color(0xFF047857),
+                        color: _role == 'customer'
+                            ? const Color(0xFF3B82F6)
+                            : const Color(0xFF047857),
                         height: 1.3,
                       ),
                     ),
@@ -945,7 +1068,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
             children: [
               Expanded(
                 child: ChoiceChip(
-                  label: const Text('🏍️ Bike', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  label: const Text(
+                    '🏍️ Bike',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
                   selected: _role == 'bikeRider',
                   onSelected: (_) => setState(() {
                     _role = 'bikeRider';
@@ -957,7 +1083,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: ChoiceChip(
-                  label: const Text('🚐 Van / Truck', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  label: const Text(
+                    '🚐 Van / Truck',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
                   selected: _role == 'driver',
                   onSelected: (_) => setState(() => _role = 'driver'),
                   selectedColor: const Color(0xFFA7F3D0),
@@ -973,7 +1102,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: const [
-              Icon(Icons.info_outline_rounded, size: 14, color: Color(0xFF2563EB)),
+              Icon(
+                Icons.info_outline_rounded,
+                size: 14,
+                color: Color(0xFF2563EB),
+              ),
               SizedBox(width: 4),
               Text(
                 'Compare account types & benefits',
@@ -998,7 +1131,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
       children: [
         const Text(
           'Driver Verification & Identity',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1E293B),
+          ),
         ),
         const SizedBox(height: 4),
         const Text(
@@ -1008,17 +1145,28 @@ class _SignUpScreenState extends State<SignUpScreen> {
         const SizedBox(height: 16),
 
         // Avatar Upload Box
-        const Text('1. Profile Photo (avatar_url)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        const Text(
+          '1. Profile Photo (avatar_url)',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        ),
         const SizedBox(height: 6),
         InkWell(
-          onTap: () => _pickAndUploadAsset(purpose: 'avatar', source: ImageSource.gallery),
+          onTap: () => _pickAndUploadAsset(
+            purpose: 'avatar',
+            source: ImageSource.gallery,
+          ),
           borderRadius: BorderRadius.circular(16),
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: const Color(0xFFF8FAFC),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: _avatarUrl != null ? const Color(0xFF10B981) : const Color(0xFFCBD5E1), width: 1.5),
+              border: Border.all(
+                color: _avatarUrl != null
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFFCBD5E1),
+                width: 1.5,
+              ),
             ),
             child: Row(
               children: [
@@ -1029,8 +1177,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     height: 50,
                     color: const Color(0xFFE2E8F0),
                     child: _avatarUrl != null
-                        ? SmartAvatar(url: _avatarUrl, fallbackInitials: 'AV', radius: 25)
-                        : const Icon(Icons.add_a_photo_rounded, color: Color(0xFF64748B)),
+                        ? SmartAvatar(
+                            url: _avatarUrl,
+                            fallbackInitials: 'AV',
+                            radius: 25,
+                          )
+                        : const Icon(
+                            Icons.add_a_photo_rounded,
+                            color: Color(0xFF64748B),
+                          ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1039,13 +1194,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _avatarUrl != null ? 'Profile Photo Uploaded ✅' : 'Tap to select Profile Picture',
+                        _avatarUrl != null
+                            ? 'Profile Photo Uploaded ✅'
+                            : 'Tap to select Profile Picture',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: _avatarUrl != null ? const Color(0xFF047857) : const Color(0xFF334155),
+                          color: _avatarUrl != null
+                              ? const Color(0xFF047857)
+                              : const Color(0xFF334155),
                         ),
                       ),
-                      const Text('Clear facial view required', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                      const Text(
+                        'Clear facial view required',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1057,17 +1222,28 @@ class _SignUpScreenState extends State<SignUpScreen> {
         const SizedBox(height: 14),
 
         // Facial Selfie Box
-        const Text('2. Live Driver Facial Selfie (driver_selfie_url)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        const Text(
+          '2. Live Driver Facial Selfie (driver_selfie_url)',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        ),
         const SizedBox(height: 6),
         InkWell(
-          onTap: () => _pickAndUploadAsset(purpose: 'selfie', source: ImageSource.camera),
+          onTap: () => _pickAndUploadAsset(
+            purpose: 'selfie',
+            source: ImageSource.camera,
+          ),
           borderRadius: BorderRadius.circular(16),
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: const Color(0xFFF8FAFC),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: _driverSelfieUrl != null ? const Color(0xFF10B981) : const Color(0xFFCBD5E1), width: 1.5),
+              border: Border.all(
+                color: _driverSelfieUrl != null
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFFCBD5E1),
+                width: 1.5,
+              ),
             ),
             child: Row(
               children: [
@@ -1078,8 +1254,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     height: 50,
                     color: const Color(0xFFE2E8F0),
                     child: _driverSelfieUrl != null
-                        ? SmartAvatar(url: _driverSelfieUrl, fallbackInitials: 'SF', radius: 25)
-                        : const Icon(Icons.camera_front_rounded, color: Color(0xFF059669)),
+                        ? SmartAvatar(
+                            url: _driverSelfieUrl,
+                            fallbackInitials: 'SF',
+                            radius: 25,
+                          )
+                        : const Icon(
+                            Icons.camera_front_rounded,
+                            color: Color(0xFF059669),
+                          ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1088,13 +1271,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _driverSelfieUrl != null ? 'Selfie Proof Captured ✅' : 'Take Facial Verification Selfie',
+                        _driverSelfieUrl != null
+                            ? 'Selfie Proof Captured ✅'
+                            : 'Take Facial Verification Selfie',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: _driverSelfieUrl != null ? const Color(0xFF047857) : const Color(0xFF334155),
+                          color: _driverSelfieUrl != null
+                              ? const Color(0xFF047857)
+                              : const Color(0xFF334155),
                         ),
                       ),
-                      const Text('Tap to launch camera snapshot', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                      const Text(
+                        'Tap to launch camera snapshot',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1108,13 +1301,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
         _filledField(
           controller: _nationalIdCtl,
           label: 'National ID / Ghana Card Number (national_id)',
-          validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter National ID number' : null,
+          validator: (v) => (v == null || v.trim().isEmpty)
+              ? 'Enter National ID number'
+              : null,
         ),
         const SizedBox(height: 12),
         _filledField(
           controller: _licenseNumberCtl,
           label: 'Driver License Number (license_number)',
-          validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter driver license number' : null,
+          validator: (v) => (v == null || v.trim().isEmpty)
+              ? 'Enter driver license number'
+              : null,
         ),
         const SizedBox(height: 20),
 
@@ -1122,7 +1319,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
           children: [
             Expanded(
               child: OutlinedButton(
-                style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
                 onPressed: () => setState(() => _currentStep = 0),
                 child: const Text('⬅ Back'),
               ),
@@ -1136,20 +1335,30 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 ),
                 onPressed: () {
                   if (_avatarUrl == null || _avatarUrl!.isEmpty) {
-                    AppSnack.show(context, 'Please upload profile photo first.');
+                    AppSnack.show(
+                      context,
+                      'Please upload profile photo first.',
+                    );
                     return;
                   }
                   if (_driverSelfieUrl == null || _driverSelfieUrl!.isEmpty) {
                     AppSnack.show(context, 'Please capture live selfie first.');
                     return;
                   }
-                  if (_nationalIdCtl.text.trim().isEmpty || _licenseNumberCtl.text.trim().isEmpty) {
-                    AppSnack.show(context, 'Enter National ID & License number.');
+                  if (_nationalIdCtl.text.trim().isEmpty ||
+                      _licenseNumberCtl.text.trim().isEmpty) {
+                    AppSnack.show(
+                      context,
+                      'Enter National ID & License number.',
+                    );
                     return;
                   }
                   setState(() => _currentStep = 2);
                 },
-                child: const Text('Next: Vehicle (2/3) ➔', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'Next: Vehicle (2/3) ➔',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ],
@@ -1165,7 +1374,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
       children: [
         const Text(
           'Vehicle Specifications & Photos',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1E293B),
+          ),
         ),
         const SizedBox(height: 4),
         const Text(
@@ -1174,13 +1387,28 @@ class _SignUpScreenState extends State<SignUpScreen> {
         ),
         const SizedBox(height: 16),
 
-        const Text('Vehicle Category (vehicle_type)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        const Text(
+          'Vehicle Category (vehicle_type)',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        ),
         const SizedBox(height: 6),
         SegmentedButton<String>(
           segments: const [
-            ButtonSegment(value: 'bike', label: Text('🏍️ Bike'), icon: Icon(Icons.two_wheeler)),
-            ButtonSegment(value: 'van', label: Text('🚐 Van'), icon: Icon(Icons.airport_shuttle)),
-            ButtonSegment(value: 'truck', label: Text('🚛 Truck'), icon: Icon(Icons.local_shipping)),
+            ButtonSegment(
+              value: 'bike',
+              label: Text('🏍️ Bike'),
+              icon: Icon(Icons.two_wheeler),
+            ),
+            ButtonSegment(
+              value: 'van',
+              label: Text('🚐 Van'),
+              icon: Icon(Icons.airport_shuttle),
+            ),
+            ButtonSegment(
+              value: 'truck',
+              label: Text('🚛 Truck'),
+              icon: Icon(Icons.local_shipping),
+            ),
           ],
           selected: {_vehicleType},
           onSelectionChanged: (s) => setState(() => _vehicleType = s.first),
@@ -1190,13 +1418,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
         _filledField(
           controller: _vehicleModelCtl,
           label: 'Vehicle Model (e.g. Mercedes Benz Actros)',
-          validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter vehicle model' : null,
+          validator: (v) =>
+              (v == null || v.trim().isEmpty) ? 'Enter vehicle model' : null,
         ),
         const SizedBox(height: 12),
         _filledField(
           controller: _licensePlateCtl,
           label: 'Registration License Plate (e.g. GW-9821-25)',
-          validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter license plate' : null,
+          validator: (v) =>
+              (v == null || v.trim().isEmpty) ? 'Enter license plate' : null,
         ),
         const SizedBox(height: 16),
 
@@ -1204,13 +1434,18 @@ class _SignUpScreenState extends State<SignUpScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('Vehicle Photos (vehicle_photos)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            const Text(
+              'Vehicle Photos (vehicle_photos)',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
             Text(
               '${_vehiclePhotos.length} / 2 required',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
-                color: _vehiclePhotos.length >= 2 ? const Color(0xFF059669) : Colors.red,
+                color: _vehiclePhotos.length >= 2
+                    ? const Color(0xFF059669)
+                    : Colors.red,
               ),
             ),
           ],
@@ -1230,18 +1465,30 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       width: 80,
                       height: 80,
                       color: const Color(0xFFE2E8F0),
-                      child: SmartAvatar(url: photoUrl, fallbackInitials: 'VH', radius: 40),
+                      child: SmartAvatar(
+                        url: photoUrl,
+                        fallbackInitials: 'VH',
+                        radius: 40,
+                      ),
                     ),
                   ),
                   Positioned(
                     top: 2,
                     right: 2,
                     child: GestureDetector(
-                      onTap: () => setState(() => _vehiclePhotos.remove(photoUrl)),
+                      onTap: () =>
+                          setState(() => _vehiclePhotos.remove(photoUrl)),
                       child: Container(
                         padding: const EdgeInsets.all(2),
-                        decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                        child: const Icon(Icons.close, size: 14, color: Colors.white),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close,
+                          size: 14,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
@@ -1249,7 +1496,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
               ),
             ),
             InkWell(
-              onTap: () => _pickAndUploadAsset(purpose: 'vehicle', source: ImageSource.gallery),
+              onTap: () => _pickAndUploadAsset(
+                purpose: 'vehicle',
+                source: ImageSource.gallery,
+              ),
               borderRadius: BorderRadius.circular(12),
               child: Container(
                 width: 80,
@@ -1257,14 +1507,24 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 decoration: BoxDecoration(
                   color: const Color(0xFFF1F5F9),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF94A3B8), style: BorderStyle.solid),
+                  border: Border.all(
+                    color: const Color(0xFF94A3B8),
+                    style: BorderStyle.solid,
+                  ),
                 ),
                 child: const Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.add_a_photo_outlined, color: Color(0xFF2563EB)),
                     SizedBox(height: 2),
-                    Text('Add Photo', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
+                    Text(
+                      'Add Photo',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF2563EB),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1277,7 +1537,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
           children: [
             Expanded(
               child: OutlinedButton(
-                style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
                 onPressed: () => setState(() => _currentStep = 1),
                 child: const Text('⬅ Back'),
               ),
@@ -1290,7 +1552,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   backgroundColor: const Color(0xFF059669),
                 ),
                 onPressed: _complete,
-                child: const Text('Submit Driver Profile 🚀', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'Submit Driver Profile 🚀',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ],
