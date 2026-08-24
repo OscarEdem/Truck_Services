@@ -17,6 +17,7 @@ class RoleViewModel extends ChangeNotifier {
   String get role => _role;
 
   String? _userId;
+  String? get userId => _userId;
 
   /// Bootstraps active user role from Go REST API gateway / Prefs
   Future<void> bootstrap() async {

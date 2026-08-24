@@ -220,7 +220,7 @@ class _ChatScreenState extends State<ChatScreen> {
         'read_by': [uid],
       };
 
-      final msgRef = await _msgsCol.add(data);
+      await _msgsCol.add(data);
 
       // update delivery summary
       await _deliveryRef.set({
@@ -298,7 +298,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Build a friendly, name-first title.
   /// - If we have both names: "Me ↔ Peer"
-  /// - If only peer: "Chat with <Peer>"
+  /// - If only peer: "Chat with `Peer`"
   /// - Fallback: roles + short code.
   String _titleText() {
     final code = (_deliveryId.length >= 6)
