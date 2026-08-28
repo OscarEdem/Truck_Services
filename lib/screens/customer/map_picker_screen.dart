@@ -3,8 +3,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart' show LatLng;
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:flutter_compass/flutter_compass.dart';
@@ -50,7 +49,8 @@ class MapPickerScreen extends StatefulWidget {
 
 class _MapPickerScreenState extends State<MapPickerScreen>
     with TickerProviderStateMixin {
-  final MapController _mapController = MapController();
+  final Completer<GoogleMapController> _controllerCompleter = Completer();
+  GoogleMapController? _mapController;
   final TextEditingController _searchController = TextEditingController();
   final Duration _debounceDuration = const Duration(milliseconds: 500);
 
@@ -67,7 +67,6 @@ class _MapPickerScreenState extends State<MapPickerScreen>
 
   // Streams & timers
   Timer? _debounce;
-  StreamSubscription? _mapEventsSub;
   StreamSubscription<CompassEvent>? _compassSub;
 
   // UI
@@ -92,10 +91,6 @@ class _MapPickerScreenState extends State<MapPickerScreen>
       final h = (event.heading ?? 0).toDouble();
       if (!mounted) return;
       setState(() => _deviceHeading = h);
-      if (_mapReady && _followHeading) {
-        _mapController.rotate(h);
-        setState(() => _mapRotation = h);
-      }
     });
   }
 
@@ -104,7 +99,6 @@ class _MapPickerScreenState extends State<MapPickerScreen>
     _debounce?.cancel();
     _searchController.removeListener(() {});
     _searchController.dispose();
-    _mapEventsSub?.cancel();
     _compassSub?.cancel();
     _fabAnim.dispose();
     super.dispose();
@@ -139,7 +133,11 @@ class _MapPickerScreenState extends State<MapPickerScreen>
       final pos = await Geolocator.getCurrentPosition();
       final center = LatLng(pos.latitude, pos.longitude);
 
-      _mapController.move(center, 15);
+      if (_mapController != null) {
+        await _mapController!.animateCamera(
+          CameraUpdate.newLatLngZoom(center, 15),
+        );
+      }
       if (!mounted) return;
 
       setState(() => _userPos = center);
@@ -202,7 +200,11 @@ class _MapPickerScreenState extends State<MapPickerScreen>
       if (locations.isNotEmpty) {
         final loc = locations.first;
         final newLatLng = LatLng(loc.latitude, loc.longitude);
-        _mapController.move(newLatLng, 14);
+        if (_mapController != null) {
+          await _mapController!.animateCamera(
+            CameraUpdate.newLatLngZoom(newLatLng, 14),
+          );
+        }
         setState(() => _selected = newLatLng);
         await _reverseGeocode(newLatLng);
       } else {
@@ -222,7 +224,6 @@ class _MapPickerScreenState extends State<MapPickerScreen>
 
     _debounce?.cancel();
     _debounce = Timer(_debounceDuration, () => _reverseGeocode(latLng));
-    _showConfirmSheet();
   }
 
   Future<MapPickResult?> _buildResultEnsuringAddress() async {
@@ -242,8 +243,7 @@ class _MapPickerScreenState extends State<MapPickerScreen>
     );
   }
 
-  /// Called when confirming from the **sheet**. We must close the sheet first,
-  /// then pop the page with the result so the caller receives it.
+  /// Called when confirming location selection.
   Future<void> _confirmFromSheet() async {
     final result = await _buildResultEnsuringAddress();
     if (result == null) {
@@ -251,20 +251,10 @@ class _MapPickerScreenState extends State<MapPickerScreen>
       return;
     }
 
-    // 1) Close the sheet
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).pop(); // closes the bottom sheet
-    }
-
-    // Small delay to avoid pop-race visual jank
-    await Future.delayed(const Duration(milliseconds: 120));
-
-    // 2) Notify callback (optional)
     widget.onConfirm?.call(result);
 
-    // 3) Pop the **page** with the payload (Map) for legacy callers
     if (mounted) {
-      Navigator.of(context).maybePop(result.toMap());
+      Navigator.of(context).pop(result.toMap());
     }
   }
 
@@ -288,35 +278,36 @@ class _MapPickerScreenState extends State<MapPickerScreen>
   }
 
   void _zoomIn() {
-    final cam = _mapController.camera;
-    _mapController.move(cam.center, cam.zoom + 1);
+    _mapController?.animateCamera(CameraUpdate.zoomIn());
   }
 
   void _zoomOut() {
-    final cam = _mapController.camera;
-    _mapController.move(cam.center, cam.zoom - 1);
-  }
-
-  void _attachMapEventsListener() {
-    _mapEventsSub?.cancel();
-    _mapEventsSub = _mapController.mapEventStream.listen((evt) {
-      final rot = evt.camera.rotation; // degrees
-      if (rot != _mapRotation) {
-        setState(() => _mapRotation = rot);
-      }
-    });
+    _mapController?.animateCamera(CameraUpdate.zoomOut());
   }
 
   void _toggleFollowHeading(bool follow) {
     setState(() => _followHeading = follow);
-    if (follow) {
-      _mapController.rotate(_deviceHeading);
-      setState(() => _mapRotation = _deviceHeading);
+    if (follow && _mapController != null) {
+      _mapController!.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: _selected ?? _userPos ?? _accra,
+            zoom: 14,
+            bearing: _deviceHeading,
+          ),
+        ),
+      );
     }
   }
 
   void _resetNorthUp() {
-    _mapController.rotate(0);
+    _mapController?.animateCamera(CameraUpdate.newCameraPosition(
+      CameraPosition(
+        target: _selected ?? _userPos ?? _accra,
+        zoom: 14,
+        bearing: 0,
+      ),
+    ));
     setState(() {
       _mapRotation = 0;
       _followHeading = false;
@@ -332,199 +323,203 @@ class _MapPickerScreenState extends State<MapPickerScreen>
   // ——————————————————— UI ———————————————————
 
   Widget _buildFlutterMap(LatLng start) {
-    return FlutterMap(
-      mapController: _mapController,
-      options: MapOptions(
-        initialCenter: start,
-        initialZoom: 12,
-        interactionOptions: const InteractionOptions(
-          flags: InteractiveFlag.all, // includes rotate, pinchZoom, drag, etc.
-        ),
-        onTap: (tapPos, point) => _onTap(point),
-        onMapReady: () async {
-          if (mounted) setState(() => _mapReady = true);
-          _fabAnim.forward();
-          _attachMapEventsListener();
-          await _moveToUser(); // center on user when ready
-        },
+    final modeHue = widget.mode == 'drop'
+        ? BitmapDescriptor.hueViolet
+        : BitmapDescriptor.hueAzure;
+
+    return GoogleMap(
+      initialCameraPosition: CameraPosition(
+        target: start,
+        zoom: 14,
       ),
-      children: [
-        // OSM tiles
-        TileLayer(
-          urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-          subdomains: const ['a', 'b', 'c'],
-          userAgentPackageName: 'com.example.cargomate',
-          maxZoom: 19,
-        ),
-
-        const RichAttributionWidget(
-          attributions: [TextSourceAttribution('© OpenStreetMap contributors')],
-        ),
-
-        // Markers
-        MarkerLayer(
-          markers: [
-            if (_userPos != null)
-              Marker(
-                point: _userPos!,
-                width: 48,
-                height: 48,
-                child: Icon(
-                  Icons.radio_button_checked,
-                  size: 28,
-                  color: Colors.blue,
-                ),
-              ),
-            if (_selected != null)
-              Marker(
-                point: _selected!,
-                width: 52,
-                height: 52,
-                child: const Icon(Icons.place, size: 46, color: Colors.red),
-              ),
-          ],
-        ),
-      ],
+      myLocationEnabled: true,
+      myLocationButtonEnabled: false,
+      zoomControlsEnabled: false,
+      compassEnabled: true,
+      mapToolbarEnabled: false,
+      onMapCreated: (GoogleMapController controller) async {
+        if (!_controllerCompleter.isCompleted) {
+          _controllerCompleter.complete(controller);
+        }
+        _mapController = controller;
+        if (mounted) setState(() => _mapReady = true);
+        _fabAnim.forward();
+        await _moveToUser();
+      },
+      onTap: (LatLng latLng) => _onTap(latLng),
+      markers: {
+        if (_selected != null)
+          Marker(
+            markerId: const MarkerId('selected_pin'),
+            position: _selected!,
+            icon: BitmapDescriptor.defaultMarkerWithHue(modeHue),
+            infoWindow: InfoWindow(
+              title: widget.mode == 'drop' ? 'Drop-off Location' : 'Pickup Location',
+              snippet: _address ?? 'Selected location',
+            ),
+          ),
+      },
     );
   }
 
+  // ---- MAP TOP SEARCH HEADER ---------------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
   Widget _buildTopBar(BuildContext context) {
-    final modeLabel = widget.mode == 'drop' ? 'Drop-off' : 'Pick-up';
-    final modeIcon = widget.mode == 'drop' ? Icons.flag : Icons.place;
+    final isDrop = widget.mode == 'drop';
+    final modeLabel = isDrop ? 'Drop-off' : 'Pick-up';
+    final modeColor = isDrop ? const Color(0xFF4F46E5) : const Color(0xFF2563EB);
+    final modeBg = isDrop ? const Color(0xFFEEF2FF) : const Color(0xFFEFF6FF);
 
     return SafeArea(
       bottom: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-        child: Row(
-          children: [
-            // Filled tonal back button
-            IconButton.filledTonal(
-              tooltip: 'Back',
-              onPressed: () => Navigator.of(context).maybePop(),
-              icon: const Icon(Icons.arrow_back),
-            ),
-            const SizedBox(width: 8),
-            // Material 3 SearchBar
-            Expanded(
-              child: SearchBar(
-                controller: _searchController,
-                hintText: 'Search address or landmark…',
-                elevation: const WidgetStatePropertyAll(2),
-                padding: const WidgetStatePropertyAll(
-                  EdgeInsets.symmetric(horizontal: 12),
-                ),
-                trailing: [
-                  if (_searchController.text.isNotEmpty)
-                    IconButton(
-                      tooltip: 'Clear',
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() {});
-                      },
-                      icon: const Icon(Icons.close),
-                    ),
-                  IconButton(
-                    tooltip: 'Search',
-                    onPressed: () => _searchAddress(_searchController.text),
-                    icon: const Icon(Icons.search),
-                  ),
-                ],
-                onSubmitted: _searchAddress,
-                // leading: const Icon(Icons.search),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
               ),
-            ),
-            const SizedBox(width: 8),
-            // Mode chip
-            FilterChip(
-              label: Text(modeLabel),
-              selected: true,
-              onSelected: (_) {},
-              avatar: Icon(modeIcon),
-            ),
-          ],
+            ],
+          ),
+          child: Row(
+            children: [
+              // Circular Back Button
+              Material(
+                color: const Color(0xFFF1F5F9),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Back',
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded, size: 20, color: Color(0xFF334155)),
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Search Field
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  onSubmitted: _searchAddress,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                  decoration: InputDecoration(
+                    hintText: 'Search location or landmark...',
+                    hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8), fontWeight: FontWeight.normal),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                    prefixIcon: const Icon(Icons.search_rounded, size: 20, color: Color(0xFF64748B)),
+                    prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 20),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? GestureDetector(
+                            onTap: () {
+                              _searchController.clear();
+                              setState(() {});
+                            },
+                            child: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF94A3B8)),
+                          )
+                        : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+
+              // Mode Pill Tag
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: modeBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: modeColor.withOpacity(0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isDrop ? Icons.flag_rounded : Icons.my_location_rounded,
+                      size: 14,
+                      color: modeColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      modeLabel,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: modeColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
+  // ---- MAP CONTROLS SIDEBAR ----------------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
   Widget _buildCompassAndZoom(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return Positioned(
-      right: 12,
-      top: 120,
+      right: 16,
+      top: 110,
       child: FadeTransition(
         opacity: _fabAnim,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // Segmented compass mode (North-up vs Follow)
+            // Recenter on me button
             Material(
-              elevation: 2,
-              borderRadius: BorderRadius.circular(100),
-              color: cs.surface,
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment<bool>(
-                      value: false,
-                      icon: Icon(Icons.explore),
-                      label: Text('North'),
-                    ),
-                    ButtonSegment<bool>(
-                      value: true,
-                      icon: Icon(Icons.explore_off),
-                      label: Text('Follow'),
-                    ),
-                  ],
-                  selected: {_followHeading},
-                  onSelectionChanged: (s) {
-                    final v = s.first;
-                    _toggleFollowHeading(v);
-                    HapticFeedback.selectionClick();
-                  },
-                  style: const ButtonStyle(
-                    visualDensity: VisualDensity.compact,
+              elevation: 4,
+              shadowColor: Colors.black26,
+              shape: const CircleBorder(),
+              color: Colors.white,
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () => _moveToUser(alsoSelect: true),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
                   ),
+                  child: const Icon(Icons.my_location_rounded, color: Color(0xFF2563EB), size: 22),
                 ),
               ),
             ),
             const SizedBox(height: 10),
 
-            // Round compass with tap/long-press actions
-            Tooltip(
-              message: _followHeading
-                  ? 'Following heading • Long-press to reset North-up'
-                  : 'North-up • Tap to follow heading',
+            // Compass / Rotation control
+            Material(
+              elevation: 4,
+              shadowColor: Colors.black26,
+              shape: const CircleBorder(),
+              color: Colors.white,
               child: InkWell(
+                customBorder: const CircleBorder(),
                 onTap: () => _toggleFollowHeading(!_followHeading),
                 onLongPress: _resetNorthUp,
-                customBorder: const CircleBorder(),
                 child: Container(
-                  width: 48,
-                  height: 48,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
-                    color: cs.surface,
                     shape: BoxShape.circle,
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 6,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
                     border: Border.all(
-                      color: _followHeading ? cs.primary : cs.outlineVariant,
+                      color: _followHeading ? const Color(0xFF2563EB) : Colors.transparent,
                       width: 2,
                     ),
                   ),
                   child: Transform.rotate(
                     angle: -_mapRotation * math.pi / 180.0,
                     child: Icon(
-                      Icons.navigation,
-                      color: _followHeading ? cs.primary : cs.onSurfaceVariant,
+                      Icons.navigation_rounded,
+                      size: 22,
+                      color: _followHeading ? const Color(0xFF2563EB) : const Color(0xFF64748B),
                     ),
                   ),
                 ),
@@ -532,30 +527,35 @@ class _MapPickerScreenState extends State<MapPickerScreen>
             ),
             const SizedBox(height: 10),
 
-            // Zoom controls (M3 FABs)
-            Column(
-              children: [
-                FloatingActionButton.small(
-                  heroTag: 'zoom_in',
-                  tooltip: 'Zoom in',
-                  onPressed: _zoomIn,
-                  child: const Icon(Icons.add),
-                ),
-                const SizedBox(height: 8),
-                FloatingActionButton.small(
-                  heroTag: 'zoom_out',
-                  tooltip: 'Zoom out',
-                  onPressed: _zoomOut,
-                  child: const Icon(Icons.remove),
-                ),
-                const SizedBox(height: 8),
-                FloatingActionButton.small(
-                  heroTag: 'recenter',
-                  tooltip: 'Recenter on me',
-                  onPressed: _moveToUser,
-                  child: const Icon(Icons.my_location),
-                ),
-              ],
+            // Unified Zoom Stack Container
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.08),
+                    blurRadius: 12,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  IconButton(
+                    tooltip: 'Zoom in',
+                    onPressed: _zoomIn,
+                    icon: const Icon(Icons.add_rounded, size: 20, color: Color(0xFF334155)),
+                  ),
+                  Container(width: 24, height: 1, color: const Color(0xFFE2E8F0)),
+                  IconButton(
+                    tooltip: 'Zoom out',
+                    onPressed: _zoomOut,
+                    icon: const Icon(Icons.remove_rounded, size: 20, color: Color(0xFF334155)),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -563,95 +563,137 @@ class _MapPickerScreenState extends State<MapPickerScreen>
     );
   }
 
-  void _showConfirmSheet() {
-    if (!mounted) return;
-    showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: false,
-      showDragHandle: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      builder: (ctx) {
-        final cs = Theme.of(ctx).colorScheme;
-        final textTheme = Theme.of(ctx).textTheme;
+  // ---- BOTTOM CONFIRMATION OVERLAY ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+  Widget _buildBottomOverlay(BuildContext context) {
+    final isDrop = widget.mode == 'drop';
+    final primaryColor = isDrop ? const Color(0xFF4F46E5) : const Color(0xFF2563EB);
 
-        final message = (_selected == null)
-            ? (_mapReady ? 'Tap the map to select a location' : 'Loading map…')
-            : (_busy
-                  ? 'Resolving address…'
-                  : (_address?.isNotEmpty == true
-                        ? _address!
-                        : 'Selected location'));
+    final addressText = (_selected == null)
+        ? (_mapReady ? 'Tap anywhere on the map to pick a location' : 'Loading map...')
+        : (_busy
+              ? 'Resolving address...'
+              : (_address?.isNotEmpty == true ? _address! : 'Selected coordinates (${_selected!.latitude.toStringAsFixed(4)}, ${_selected!.longitude.toStringAsFixed(4)})'));
 
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+    return Positioned(
+      left: 16,
+      right: 16,
+      bottom: 24,
+      child: FadeTransition(
+        opacity: _fabAnim,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.12),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: cs.primaryContainer,
-                  child: Icon(
-                    widget.mode == 'drop' ? Icons.flag : Icons.place,
-                    color: cs.onPrimaryContainer,
-                  ),
-                ),
-                title: Text(
-                  widget.mode == 'drop'
-                      ? 'Confirm drop-off'
-                      : 'Confirm pick-up',
-                  style: textTheme.titleMedium,
-                ),
-                subtitle: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: Text(
-                    message,
-                    key: ValueKey(message),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                trailing: _busy
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : null,
-              ),
-              const SizedBox(height: 10),
               Row(
                 children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _busy ? null : _confirmFromSheet,
-                      icon: const Icon(Icons.check_circle),
-                      label: const Text('Use selected'),
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: primaryColor.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      isDrop ? Icons.flag_rounded : Icons.location_on_rounded,
+                      color: primaryColor,
+                      size: 22,
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: FilledButton.tonalIcon(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isDrop ? 'Selected Drop-off Spot' : 'Selected Pick-up Spot',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          addressText,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_busy)
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        backgroundColor: primaryColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      onPressed: _busy ? null : _confirmFromSheet,
+                      icon: const Icon(Icons.check_circle_rounded, size: 18),
+                      label: const Text(
+                        'Confirm Location',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        foregroundColor: const Color(0xFF334155),
+                        side: const BorderSide(color: Color(0xFFCBD5E1)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
                       onPressed: _busy ? null : _useCurrentAndConfirm,
-                      icon: const Icon(Icons.my_location),
-                      label: const Text('Use current'),
+                      icon: const Icon(Icons.my_location_rounded, size: 16),
+                      label: const Text(
+                        'Current',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: _busy ? null : _resetNorthUp,
-                  icon: const Icon(Icons.explore),
-                  label: const Text('Reset north-up'),
-                ),
-              ),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -660,12 +702,12 @@ class _MapPickerScreenState extends State<MapPickerScreen>
     final start = widget.initialCenter ?? _accra;
 
     return Scaffold(
-      // Material 3 defaults are enabled by ThemeData(useMaterial3: true)
       body: Stack(
         children: [
           _buildFlutterMap(start),
           _buildTopBar(context),
           _buildCompassAndZoom(context),
+          _buildBottomOverlay(context),
           if (!_mapReady)
             const Center(
               child: SizedBox(
@@ -675,22 +717,6 @@ class _MapPickerScreenState extends State<MapPickerScreen>
               ),
             ),
         ],
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      floatingActionButton: FadeTransition(
-        opacity: _fabAnim,
-        child: FloatingActionButton.extended(
-          heroTag: 'confirm_fab',
-          onPressed: () {
-            if (_selected == null) {
-              _toast('Tap the map to choose a location');
-              return;
-            }
-            _showConfirmSheet();
-          },
-          icon: const Icon(Icons.check),
-          label: const Text('Confirm location'),
-        ),
       ),
     );
   }

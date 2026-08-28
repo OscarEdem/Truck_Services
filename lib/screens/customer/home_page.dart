@@ -4,11 +4,13 @@ import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 // Map & location
-import 'package:flutter_map/flutter_map.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:geolocator/geolocator.dart';
 import '../../services/directions_service.dart' as dirs;
@@ -17,6 +19,7 @@ import '../../routes/navRoutes.dart';
 import '../../services/estimation_service.dart' as est; // estimator alias
 import '../../services/delivery_helpers.dart';
 import '../../screens/signature_screen.dart';
+import '../../services/prefs.dart';
 import '../../widgets/widgets.dart'; // for EmptyPlaceholder/ErrorPlaceholder if you use them
 
 class HomePage extends StatefulWidget {
@@ -29,22 +32,22 @@ class HomePage extends StatefulWidget {
 enum VehicleType { bike, van, truck }
 
 class _HomePageState extends State<HomePage> {
+  // controllers
   final _pickupCtrl = TextEditingController();
   final _dropoffCtrl = TextEditingController();
-  VehicleType _vehicle = VehicleType.bike;
 
-  // loaders UI (only for Cargo/Freight)
+  // state
+  VehicleType _vehicle = VehicleType.bike;
   bool _needsLoaders = false;
-  int _loaderCount = 1;
+  int _loaderCount = 1; // UI loader count
+
+  // route / price states
+  bool _routeLoading = false;
+  List<ll.LatLng> _routePoints = const [];
+  bool _routeFromFallback = false;
 
   bool _loadingPrice = false;
   String? _quotedPrice;
-
-  // route drawing
-  List<ll.LatLng> _routePoints = const [];
-  // ignore: unused_field
-  bool _routeLoading = false;
-  bool _routeFromFallback = false;
 
   // coords from map picker
   double? _pLat, _pLng, _dLat, _dLng;
@@ -57,7 +60,7 @@ class _HomePageState extends State<HomePage> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // Map / Location
-  final MapController _map = MapController();
+  gmaps.GoogleMapController? _gmapCtrl;
   ll.LatLng? _userLatLng;
   bool _locating = false;
 
@@ -91,6 +94,40 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _locateMe(initial: true);
+    _restoreDraft();
+  }
+
+  Future<void> _restoreDraft() async {
+    try {
+      final draft = await Prefs.I.getDraftBooking();
+      if (draft != null && mounted) {
+        setState(() {
+          if (draft['pickup_address'] != null) _pickupCtrl.text = draft['pickup_address'].toString();
+          if (draft['drop_address'] != null) _dropoffCtrl.text = draft['drop_address'].toString();
+          _pLat = (draft['pickup_lat'] as num?)?.toDouble();
+          _pLng = (draft['pickup_lng'] as num?)?.toDouble();
+          _dLat = (draft['drop_lat'] as num?)?.toDouble();
+          _dLng = (draft['drop_lng'] as num?)?.toDouble();
+        });
+        if (_pLat != null && _pLng != null && _dLat != null && _dLng != null) {
+          _computeRoute();
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveDraft() async {
+    try {
+      if (_pickupCtrl.text.isEmpty && _dropoffCtrl.text.isEmpty) return;
+      await Prefs.I.setDraftBooking({
+        'pickup_address': _pickupCtrl.text.trim(),
+        'drop_address': _dropoffCtrl.text.trim(),
+        'pickup_lat': _pLat,
+        'pickup_lng': _pLng,
+        'drop_lat': _dLat,
+        'drop_lng': _dLng,
+      });
+    } catch (_) {}
   }
 
   @override
@@ -196,10 +233,13 @@ class _HomePageState extends State<HomePage> {
       );
       _userLatLng = ll.LatLng(pos.latitude, pos.longitude);
       setState(() {});
-      if (initial) {
-        _map.move(_userLatLng!, 14);
-      } else {
-        _map.move(_userLatLng!, _map.camera.zoom);
+      if (_gmapCtrl != null && _userLatLng != null) {
+        await _gmapCtrl!.animateCamera(
+          gmaps.CameraUpdate.newLatLngZoom(
+            gmaps.LatLng(_userLatLng!.latitude, _userLatLng!.longitude),
+            14,
+          ),
+        );
       }
     } catch (_) {
       // ignore
@@ -209,15 +249,18 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _fitRouteIfReady() {
-    if (_pLat == null || _dLat == null) return;
-    final bounds = LatLngBounds.fromPoints([
-      ll.LatLng(_pLat!, _pLng!),
-      ll.LatLng(_dLat!, _dLng!),
-    ]);
-    _map.fitCamera(
-      CameraFit.bounds(
-        bounds: bounds,
-        padding: const EdgeInsets.fromLTRB(32, 120, 32, 32),
+    if (_pLat == null || _dLat == null || _gmapCtrl == null) return;
+    final minLat = math.min(_pLat!, _dLat!);
+    final maxLat = math.max(_pLat!, _dLat!);
+    final minLng = math.min(_pLng!, _dLng!);
+    final maxLng = math.max(_pLng!, _dLng!);
+    _gmapCtrl!.animateCamera(
+      gmaps.CameraUpdate.newLatLngBounds(
+        gmaps.LatLngBounds(
+          southwest: gmaps.LatLng(minLat, minLng),
+          northeast: gmaps.LatLng(maxLat, maxLng),
+        ),
+        60,
       ),
     );
   }
@@ -262,8 +305,10 @@ class _HomePageState extends State<HomePage> {
       if (_pLat != null && _dLat != null) {
         _fitRouteIfReady();
         await _computeRoute();
-      } else if (lat != null && lng != null) {
-        _map.move(ll.LatLng(lat, lng), 14);
+      } else if (lat != null && lng != null && _gmapCtrl != null) {
+        _gmapCtrl!.animateCamera(
+          gmaps.CameraUpdate.newLatLngZoom(gmaps.LatLng(lat, lng), 14),
+        );
       }
     }
     _recalcDisplayedQuote();
@@ -323,7 +368,7 @@ class _HomePageState extends State<HomePage> {
     setState(() => _quotedPrice = _fmtGhs(total));
   }
 
-  void _startBooking() {
+  Future<void> _startBooking() async {
     // Guard
     if (_pickupCtrl.text.trim().isEmpty || _dropoffCtrl.text.trim().isEmpty) {
       _snack('Enter pickup & dropoff first');
@@ -389,14 +434,20 @@ class _HomePageState extends State<HomePage> {
         .map((p) => {'lat': p.latitude, 'lng': p.longitude})
         .toList(growable: false);
 
-    Navigator.pushNamed(
+    await _saveDraft();
+
+    final result = await Navigator.pushNamed(
       context,
       NavRoutes.deliveryReview,
       arguments: {'delivery': delivery, 'polyline': polyline},
     );
     debugPrint(
-      '[HOME] delivery keys=${delivery.keys} polyLen=${polyline.length}',
+      '[HOME] delivery keys=${delivery.keys} polyLen=${polyline.length} result=$result',
     );
+    if (result != null && mounted) {
+      await Prefs.I.clearDraftBooking();
+      Navigator.pushNamed(context, NavRoutes.deliveries);
+    }
   }
 
   Future<void> _repeatLast() async {
@@ -465,62 +516,20 @@ class _HomePageState extends State<HomePage> {
         _pickupCtrl.text.trim().isNotEmpty &&
         _dropoffCtrl.text.trim().isNotEmpty;
 
-    // Build markers for map
-    final markers = <Marker>[
-      if (_userLatLng != null)
-        Marker(
-          point: _userLatLng!,
-          alignment: Alignment.center,
-          child: const Icon(
-            Icons.radio_button_checked,
-            size: 28,
-            color: Colors.blue,
-          ),
-        ),
-      if (_pLat != null && _pLng != null)
-        Marker(
-          point: ll.LatLng(_pLat!, _pLng!),
-          alignment: Alignment.bottomCenter,
-          child: const Icon(Icons.room, size: 36, color: Colors.green),
-        ),
-      if (_dLat != null && _dLng != null)
-        Marker(
-          point: ll.LatLng(_dLat!, _dLng!),
-          alignment: Alignment.bottomCenter,
-          child: const Icon(Icons.location_on, size: 36, color: Colors.red),
-        ),
-    ];
-
-    // Build polyline (prefer routed; else straight)
-    final polylines = <Polyline>[
-      if (_routePoints.isNotEmpty)
-        Polyline(
-          points: _routePoints,
-          color: Theme.of(context).colorScheme.primary,
-          strokeWidth: 4,
-        )
-      else if (_pLat != null && _dLat != null)
-        Polyline(
-          points: [ll.LatLng(_pLat!, _pLng!), ll.LatLng(_dLat!, _dLng!)],
-          color: Theme.of(context).colorScheme.primary,
-          strokeWidth: 4,
-        ),
-    ];
-
     final showLoadersSection =
         _vehicle == VehicleType.van || _vehicle == VehicleType.truck;
 
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: Colors.white,
+      // ---- CUSTOMER HOME SCREEN -----------------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
       appBar: AppBar(
-        automaticallyImplyLeading: false, // no back button
+        automaticallyImplyLeading: false,
         backgroundColor: const Color(0xFF1565C0),
         elevation: 0,
-        titleSpacing: 0,
+        titleSpacing: 16,
         title: Row(
           children: [
-            const SizedBox(width: 15),
             Image.asset(
               'assets/icons/cargomatewhitelogo.png',
               height: 26,
@@ -538,6 +547,14 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Menu',
+            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+            icon: const Icon(Icons.menu_rounded, color: Colors.white),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       endDrawer: const CustomerDrawer(),
       body: SafeArea(
@@ -550,46 +567,107 @@ class _HomePageState extends State<HomePage> {
               children: [
                 SizedBox(
                   height: 360,
-                  child: FlutterMap(
-                    mapController: _map,
-                    options: MapOptions(
-                      initialCenter:
-                          _userLatLng ??
-                          const ll.LatLng(5.6037, -0.1870), // fallback
-                      initialZoom: 12,
-                      interactionOptions: const InteractionOptions(
-                        flags:
-                            InteractiveFlag.drag |
-                            InteractiveFlag.flingAnimation |
-                            InteractiveFlag.pinchZoom,
+                  child: gmaps.GoogleMap(
+                    gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                      Factory<OneSequenceGestureRecognizer>(
+                        () => EagerGestureRecognizer(),
                       ),
+                    },
+                    initialCameraPosition: gmaps.CameraPosition(
+                      target: gmaps.LatLng(
+                        _userLatLng?.latitude ?? 5.6037,
+                        _userLatLng?.longitude ?? -0.1870,
+                      ),
+                      zoom: 12,
                     ),
-                    children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.example.cargomate',
-                      ),
-                      if (polylines.isNotEmpty)
-                        PolylineLayer(polylines: polylines),
-                      if (markers.isNotEmpty) MarkerLayer(markers: markers),
-                    ],
+                    myLocationEnabled: true,
+                    myLocationButtonEnabled: false,
+                    zoomControlsEnabled: false,
+                    compassEnabled: false,
+                    mapToolbarEnabled: false,
+                    onMapCreated: (gmaps.GoogleMapController controller) {
+                      _gmapCtrl = controller;
+                    },
+                    polylines: {
+                      if (_routePoints.isNotEmpty)
+                        gmaps.Polyline(
+                          polylineId: const gmaps.PolylineId('route_preview'),
+                          points: _routePoints
+                              .map((p) => gmaps.LatLng(p.latitude, p.longitude))
+                              .toList(),
+                          color: const Color(0xFF2563EB),
+                          width: 5,
+                        ),
+                    },
+                    markers: {
+                      if (_pLat != null && _pLng != null)
+                        gmaps.Marker(
+                          markerId: const gmaps.MarkerId('pickup_marker'),
+                          position: gmaps.LatLng(_pLat!, _pLng!),
+                          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                            gmaps.BitmapDescriptor.hueAzure,
+                          ),
+                        ),
+                      if (_dLat != null && _dLng != null)
+                        gmaps.Marker(
+                          markerId: const gmaps.MarkerId('dropoff_marker'),
+                          position: gmaps.LatLng(_dLat!, _dLng!),
+                          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                            gmaps.BitmapDescriptor.hueViolet,
+                          ),
+                        ),
+                    },
                   ),
                 ),
+                if (_routeLoading)
+                  Positioned(
+                    top: 16,
+                    right: 16,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.7),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                          SizedBox(width: 6),
+                          Text('Routing…', style: TextStyle(color: Colors.white, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                  ),
                 // locate button
                 Positioned(
                   right: 16,
                   bottom: 16,
-                  child: FloatingActionButton.small(
-                    heroTag: 'locate',
-                    onPressed: _locating ? null : () => _locateMe(),
-                    child: _locating
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.my_location),
+                  child: Material(
+                    elevation: 4,
+                    shadowColor: Colors.black26,
+                    shape: const CircleBorder(),
+                    color: Colors.white,
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: _locating ? null : () => _locateMe(),
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                        ),
+                        child: _locating
+                            ? const Center(
+                                child: SizedBox(
+                                  height: 18,
+                                  width: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                                ),
+                              )
+                            : const Icon(Icons.my_location_rounded, color: Color(0xFF2563EB), size: 22),
+                      ),
+                    ),
                   ),
                 ),
                 // floating address card
@@ -771,7 +849,7 @@ class _HomePageState extends State<HomePage> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
                 child: Text(
-                  '≈ ${_quoteObj!.distanceKm.toStringAsFixed(2)} km • ETA ~ ${_quoteObj!.timeMin} min',
+                  '≈ ${_quoteObj!.distanceKm.toStringAsFixed(2)} km • Est. Time ~ ${_quoteObj!.timeMin} min',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -878,7 +956,7 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-/* ---------- Header address overlay (map card) ---------- */
+/* ---------- Header address overlay (map card) ---------- */ //                                                                                                                                                                                #*eddiere
 
 class _AddressOverlay extends StatelessWidget {
   final TextEditingController pickupCtrl;
@@ -895,77 +973,158 @@ class _AddressOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final border = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(18),
-      borderSide: BorderSide.none,
-    );
+    final hasPickup = pickupCtrl.text.trim().isNotEmpty;
+    final hasDropoff = dropoffCtrl.text.trim().isNotEmpty;
 
-    return Material(
-      elevation: 10,
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Column(
-          children: [
-            _OverlayField(
-              controller: pickupCtrl,
-              hint: 'Enter pickup address',
-              icon: Icons.location_pin,
-              onTap: onPickPickup,
-              border: border,
-            ),
-            const SizedBox(height: 10),
-            _OverlayField(
-              controller: dropoffCtrl,
-              hint: 'Enter drop address',
-              icon: Icons.crop_square_rounded,
-              onTap: onPickDropoff,
-              border: border,
-            ),
-          ],
-        ),
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.12),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
-    );
-  }
-}
+      child: Row(
+        children: [
+          // Left: Vertical Route Connector Graphic
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Pickup Dot
+              Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB).withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF2563EB),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 2),
+              // Vertical Connector Line
+              Container(
+                width: 2,
+                height: 26,
+                color: const Color(0xFF93C5FD),
+              ),
+              const SizedBox(height: 2),
+              // Dropoff Square Pin
+              Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4F46E5).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Center(
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4F46E5),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 14),
 
-class _OverlayField extends StatelessWidget {
-  final TextEditingController controller;
-  final String hint;
-  final IconData icon;
-  final VoidCallback onTap;
-  final InputBorder border;
-  const _OverlayField({
-    required this.controller,
-    required this.hint,
-    required this.icon,
-    required this.onTap,
-    required this.border,
-  });
+          // Middle: Interactive Pickup & Dropoff Rows
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Pickup Row
+                InkWell(
+                  onTap: onPickPickup,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'PICKUP LOCATION',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF2563EB),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          hasPickup ? pickupCtrl.text : 'Tap to select pickup location',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: hasPickup ? FontWeight.w700 : FontWeight.w500,
+                            color: hasPickup ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
 
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      readOnly: true,
-      onTap: onTap,
-      decoration: InputDecoration(
-        hintText: hint,
-        prefixIcon: Icon(icon),
-        border: border,
-        enabledBorder: border,
-        focusedBorder: border,
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(
-          vertical: 16,
-          horizontal: 12,
-        ),
+                const Divider(height: 12, thickness: 1, color: Color(0xFFF1F5F9)),
+
+                // Dropoff Row
+                InkWell(
+                  onTap: onPickDropoff,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'DROP-OFF DESTINATION',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF4F46E5),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          hasDropoff ? dropoffCtrl.text : 'Tap to select destination',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: hasDropoff ? FontWeight.w700 : FontWeight.w500,
+                            color: hasDropoff ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
@@ -10,6 +12,7 @@ import '../../services/api_service.dart';
 import '../../services/prefs.dart';
 import '../../routes/navRoutes.dart';
 import '../../widgets/widgets.dart';
+import '../widgets/circular_selfie_camera.dart';
 import '../../viewmodel/role_view_model.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -22,20 +25,65 @@ class ProfileScreen extends StatelessWidget {
     final role = roleVm?.role;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Profile & Credentials'), centerTitle: true),
+      backgroundColor: const Color(0xFFF8FAFC),
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        title: const Text(
+          'Account Profile',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+            color: Colors.white,
+          ),
+        ),
+        centerTitle: true,
+        backgroundColor: const Color(0xFF1565C0),
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+      ),
       body: user == null
-          ? const Center(child: Text('Not signed in'))
+          ? const Center(
+              child: Text(
+                'Not signed in',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            )
           : const _ProfileBody(),
       floatingActionButton: (user != null && role == 'customer')
-          ? FloatingActionButton.extended(
-              onPressed: () => _onAddLocation(context),
-              icon: const Icon(Icons.add_location_alt),
-              label: const Text('Add location'),
+          ? Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF3D5AFE), Color(0xFF2563EB)],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF2563EB).withOpacity(0.35),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: FloatingActionButton.extended(
+                elevation: 0,
+                focusElevation: 0,
+                hoverElevation: 0,
+                highlightElevation: 0,
+                backgroundColor: Colors.transparent,
+                onPressed: () => _onAddLocation(context),
+                icon: const Icon(Icons.add_location_alt_rounded, color: Colors.white),
+                label: const Text(
+                  'Add location',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
             )
           : null,
-      bottomNavigationBar: (role == 'customer')
-          ? MainBottomNav(currentRoute: ModalRoute.of(context)?.settings.name)
-          : null,
+      bottomNavigationBar: MainBottomNav(currentRoute: ModalRoute.of(context)?.settings.name),
     );
   }
 
@@ -84,22 +132,51 @@ class _ProfileBody extends StatefulWidget {
 }
 
 class _ProfileBodyState extends State<_ProfileBody> {
+  // ---- DETERMINISTIC PROFILE AVATAR CACHING -------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
   bool _isUploading = false;
   Map<String, dynamic> _apiProfile = {};
+  String? _cachedAvatarUrl;
 
   @override
   void initState() {
     super.initState();
+    _loadCachedAvatar();
     _fetchBackendProfile();
+  }
+
+  Future<void> _loadCachedAvatar() async {
+    final cached = await Prefs.I.getAvatarUrl();
+    final photo = FirebaseAuth.instance.currentUser?.photoURL;
+    if (mounted && ((cached != null && cached.isNotEmpty) || (photo != null && photo.isNotEmpty))) {
+      setState(() {
+        _cachedAvatarUrl = (cached != null && cached.isNotEmpty) ? cached : photo;
+      });
+    }
   }
 
   Future<void> _fetchBackendProfile() async {
     try {
       final me = await ApiService.I.getMe();
       if (mounted) {
-        setState(() {
-          _apiProfile = me;
-        });
+        final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
+        final savedRole = await Prefs.I.getRole();
+        if (savedRole != null && savedRole.trim().isNotEmpty) {
+          userObj['role'] = savedRole.trim();
+          me['role'] = savedRole.trim();
+        }
+
+        final remote = (userObj['avatar_url'] as String? ?? userObj['avatarUrl'] as String? ?? me['avatar_url'] as String? ?? me['avatarUrl'] as String? ?? me['avatar'] as String? ?? '').trim();
+        if (remote.isNotEmpty) {
+          Prefs.I.setAvatarUrl(remote);
+          setState(() {
+            _cachedAvatarUrl = remote;
+            _apiProfile = me;
+          });
+        } else {
+          setState(() {
+            _apiProfile = me;
+          });
+        }
       }
     } catch (_) {}
   }
@@ -108,19 +185,35 @@ class _ProfileBodyState extends State<_ProfileBody> {
     required String purpose, // "avatar", "selfie", "vehicle"
     required Function(String url) onSuccess,
   }) async {
-    final picker = ImagePicker();
-    final image = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 1200,
-    );
-    if (image == null) return;
+    File? fileToUpload;
+    String fileName = 'file_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    if (purpose == 'selfie') {
+      final captured = await CircularSelfieCamera.show(
+        context,
+        title: 'Live Driver Facial Selfie',
+        hintText: 'Center your face inside the circle',
+      );
+      if (captured == null) return;
+      fileToUpload = captured;
+      fileName = 'selfie_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    } else {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1200,
+      );
+      if (image == null) return;
+      fileToUpload = File(image.path);
+      fileName = image.name;
+    }
 
     setState(() => _isUploading = true);
     try {
-      final bytes = await image.readAsBytes();
-      final url = await ApiService.I.uploadAssetFile(bytes, image.name, purpose);
-      final ext = image.name.split('.').last.toLowerCase();
+      final bytes = await fileToUpload.readAsBytes();
+      final url = await ApiService.I.uploadAssetFile(bytes, fileName, purpose);
+      final ext = fileName.split('.').last.toLowerCase();
       final mime = (ext == 'png') ? 'image/png' : 'image/jpeg';
       final dataUri = 'data:$mime;base64,${base64Encode(bytes)}';
 
@@ -131,6 +224,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
           setState(() {
             if (purpose == 'avatar') {
               _apiProfile['avatar_url'] = finalUrl;
+              _cachedAvatarUrl = finalUrl;
               Prefs.I.setAvatarUrl(finalUrl);
             }
             if (purpose == 'selfie') _apiProfile['driver_selfie_url'] = finalUrl;
@@ -159,7 +253,12 @@ class _ProfileBodyState extends State<_ProfileBody> {
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser!;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return const Center(
+        child: Text('Not signed in', style: TextStyle(color: Color(0xFF64748B))),
+      );
+    }
     final roleVm = context.watch<RoleViewModel?>();
     final cachedRole = roleVm?.role;
 
@@ -173,20 +272,29 @@ class _ProfileBodyState extends State<_ProfileBody> {
 
     final phone = user.phoneNumber ?? (userObj['phone'] as String? ?? userObj['phone_number'] as String? ?? profile['phone'] as String? ?? '—');
     final email = user.email ?? (userObj['email'] as String? ?? profile['email'] as String? ?? '—');
-    var avatarUrl = userObj['avatar_url'] as String? ?? userObj['avatarUrl'] as String? ?? profile['avatar_url'] as String? ?? profile['avatarUrl'] as String? ?? profile['avatar'] as String? ?? '';
+
+    final seed = user.phoneNumber?.replaceAll(RegExp(r'\D'), '') ?? (user.email?.isNotEmpty == true ? user.email : user.uid);
+    final deterministicDefault = 'https://api.dicebear.com/7.x/adventurer/png?seed=$seed';
+
+    var remoteAvatar = (userObj['avatar_url'] as String? ?? userObj['avatarUrl'] as String? ?? profile['avatar_url'] as String? ?? profile['avatarUrl'] as String? ?? profile['avatar'] as String? ?? user.photoURL ?? '').trim();
+    var avatarUrl = (_cachedAvatarUrl != null && _cachedAvatarUrl!.isNotEmpty)
+        ? _cachedAvatarUrl!
+        : (remoteAvatar.isNotEmpty ? remoteAvatar : deterministicDefault);
 
     if (avatarUrl.contains('api.dicebear.com') && avatarUrl.contains('/svg')) {
       avatarUrl = avatarUrl.replaceAll('/svg', '/png');
     }
-    if (avatarUrl.isNotEmpty) {
-      debugPrint('[AVATAR_IMAGE_URL] $avatarUrl');
-    }
 
     final docRole = (userObj['role'] as String? ?? profile['role'] as String?)?.trim().toLowerCase();
-    final role = (docRole != null && docRole.isNotEmpty)
-        ? docRole
-        : (cachedRole?.trim().toLowerCase() ?? 'customer');
-    final isDriver = role == 'driver' || role == 'bikerider';
+    final activeRole = (cachedRole != null && cachedRole.trim().isNotEmpty)
+        ? cachedRole.trim().toLowerCase()
+        : ((docRole != null && docRole.isNotEmpty) ? docRole : 'customer');
+    final isDriver = activeRole.contains('driver') || activeRole.contains('bike');
+
+    final bool isVerified = (userObj['is_verified'] == true) ||
+        (userObj['isVerified'] == true) ||
+        (profile['is_verified'] == true) ||
+        (profile['isVerified'] == true);
 
     // Driver details
     final nationalId = userObj['national_id'] as String? ?? userObj['nationalId'] as String? ?? profile['national_id'] as String? ?? '';
@@ -206,247 +314,426 @@ class _ProfileBodyState extends State<_ProfileBody> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ---------- Profile Header Card ----------
-              Card(
-                elevation: 2,
-                clipBehavior: Clip.antiAlias,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              // ---------- PROFILE HEADER CARD -----------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          // Avatar with Upload Overlay
+                          // Avatar with glowing ring frame
                           GestureDetector(
-                            onTap: () => _uploadImage(
-                              purpose: 'avatar',
-                              onSuccess: (url) async {
-                                try {
-                                  await ApiService.I.updateMe({'avatar_url': url});
-                                } catch (_) {}
-                              },
-                            ),
-                                child: Stack(
-                                  children: [
-                                    ClipOval(
-                                      child: Container(
-                                        width: 72,
-                                        height: 72,
-                                        color: Theme.of(context).primaryColor.withOpacity(0.15),
-                                        child: avatarUrl.isNotEmpty
-                                            ? _buildSmartImage(
-                                                avatarUrl,
-                                                width: 72,
-                                                height: 72,
-                                                fit: BoxFit.cover,
-                                                errorBuilder: (context, error, stackTrace) {
-                                                  debugPrint('[AVATAR_LOAD_ERROR] Failed to render image ($avatarUrl): $error');
-                                                  return Center(
-                                                    child: Text(
-                                                      title.isNotEmpty ? title[0].toUpperCase() : '?',
-                                                      style: TextStyle(
-                                                        fontSize: 28,
-                                                        fontWeight: FontWeight.bold,
-                                                        color: Theme.of(context).primaryColor,
-                                                      ),
-                                                    ),
-                                                  );
-                                                },
-                                              )
-                                            : Center(
-                                                child: Text(
-                                                  title.isNotEmpty ? title[0].toUpperCase() : '?',
-                                                  style: TextStyle(
-                                                    fontSize: 28,
-                                                    fontWeight: FontWeight.bold,
-                                                    color: Theme.of(context).primaryColor,
-                                                  ),
-                                                ),
+                            onTap: () {
+                              showModalBottomSheet(
+                                context: context,
+                                backgroundColor: Colors.white,
+                                shape: const RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                                ),
+                                builder: (ctx) => SafeArea(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const SizedBox(height: 12),
+                                      Container(
+                                        width: 36,
+                                        height: 4,
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey.shade300,
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      ListTile(
+                                        leading: const Icon(Icons.fullscreen_rounded, color: Color(0xFF1565C0)),
+                                        title: const Text('View Profile Photo', style: TextStyle(fontWeight: FontWeight.w600)),
+                                        onTap: () {
+                                          Navigator.pop(ctx);
+                                          FullScreenImageViewer.show(context, avatarUrl, title: 'Profile Photo');
+                                        },
+                                      ),
+                                      ListTile(
+                                        leading: const Icon(Icons.photo_camera_rounded, color: Color(0xFF059669)),
+                                        title: const Text('Upload New Profile Photo', style: TextStyle(fontWeight: FontWeight.w600)),
+                                        onTap: () {
+                                          Navigator.pop(ctx);
+                                          _uploadImage(
+                                            purpose: 'avatar',
+                                            onSuccess: (url) async {
+                                              try {
+                                                await ApiService.I.updateMe({'avatar_url': url});
+                                              } catch (_) {}
+                                            },
+                                          );
+                                        },
+                                      ),
+                                      const SizedBox(height: 8),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                            child: Stack(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(3),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: LinearGradient(
+                                      colors: isDriver
+                                          ? [const Color(0xFF059669), const Color(0xFF10B981)]
+                                          : [const Color(0xFF3D5AFE), const Color(0xFF60A5FA)],
+                                    ),
+                                  ),
+                                  child: ClipOval(
+                                    child: Container(
+                                      width: 68,
+                                      height: 68,
+                                      color: Colors.white,
+                                      child: _buildSmartImage(
+                                        avatarUrl,
+                                        width: 68,
+                                        height: 68,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (context, error, stackTrace) {
+                                          return Center(
+                                            child: Text(
+                                              title.isNotEmpty ? title[0].toUpperCase() : '?',
+                                              style: const TextStyle(
+                                                fontSize: 26,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF3D5AFE),
                                               ),
+                                            ),
+                                          );
+                                        },
                                       ),
                                     ),
-                                    Positioned(
-                                      bottom: 0,
-                                      right: 0,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(4),
-                                        decoration: BoxDecoration(
-                                          color: Theme.of(context).primaryColor,
-                                          shape: BoxShape.circle,
+                                  ),
+                                ),
+                                Positioned(
+                                  bottom: 0,
+                                  right: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(5),
+                                    decoration: BoxDecoration(
+                                      color: isDriver ? const Color(0xFF059669) : const Color(0xFF3D5AFE),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 2),
+                                    ),
+                                    child: const Icon(
+                                      Icons.camera_alt_rounded,
+                                      size: 13,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+
+                          // Name & Role Pill
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  title,
+                                  style: const TextStyle(
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: isDriver
+                                        ? (isVerified ? const Color(0xFFECFDF5) : const Color(0xFFFEF3C7))
+                                        : const Color(0xFFEFF6FF),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: isDriver
+                                          ? (isVerified ? const Color(0xFFA7F3D0) : const Color(0xFFFDE68A))
+                                          : const Color(0xFFBFDBFE),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        isDriver
+                                            ? (isVerified ? Icons.verified_user_rounded : Icons.hourglass_top_rounded)
+                                            : Icons.verified_rounded,
+                                        size: 14,
+                                        color: isDriver
+                                            ? (isVerified ? const Color(0xFF059669) : const Color(0xFFD97706))
+                                            : const Color(0xFF2563EB),
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        isDriver
+                                            ? (isVerified ? 'FLEET DRIVER • VERIFIED' : 'PENDING VERIFICATION')
+                                            : 'PERSONAL ACCOUNT',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w800,
+                                          color: isDriver
+                                              ? (isVerified ? const Color(0xFF047857) : const Color(0xFFB45309))
+                                              : const Color(0xFF1E40AF),
+                                          letterSpacing: 0.5,
                                         ),
-                                        child: const Icon(
-                                          Icons.camera_alt,
-                                          size: 16,
-                                          color: Colors.white,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Contact Chips Container
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFF1F5F9)),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.phone_iphone_rounded, size: 16, color: Color(0xFF64748B)),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      phone,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF334155),
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (email.isNotEmpty && email != '—') ...[
+                              Container(height: 16, width: 1, color: const Color(0xFFCBD5E1)),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.mail_outline_rounded, size: 16, color: Color(0xFF64748B)),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        email,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF334155),
                                         ),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            title,
-                                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                          ),
-                                        ),
-                                        Container(
-                                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                                           decoration: BoxDecoration(
-                                             gradient: LinearGradient(
-                                               colors: isDriver
-                                                   ? [const Color(0xFF059669), const Color(0xFF10B981)]
-                                                   : [const Color(0xFF2563EB), const Color(0xFF3B82F6)],
-                                             ),
-                                             borderRadius: BorderRadius.circular(20),
-                                             boxShadow: [
-                                               BoxShadow(
-                                                 color: (isDriver ? const Color(0xFF10B981) : Colors.blue).withOpacity(0.25),
-                                                 blurRadius: 6,
-                                                 offset: const Offset(0, 2),
-                                               ),
-                                             ],
-                                           ),
-                                           child: Row(
-                                             mainAxisSize: MainAxisSize.min,
-                                             children: [
-                                               Icon(
-                                                 isDriver ? Icons.verified_user_rounded : Icons.verified_rounded,
-                                                 size: 14,
-                                                 color: Colors.white,
-                                               ),
-                                               const SizedBox(width: 4),
-                                               Text(
-                                                 isDriver ? 'FLEET DRIVER' : 'PERSONAL ACCOUNT',
-                                                 style: const TextStyle(
-                                                   fontSize: 10,
-                                                   fontWeight: FontWeight.w800,
-                                                   color: Colors.white,
-                                                   letterSpacing: 0.5,
-                                                 ),
-                                               ),
-                                             ],
-                                           ),
-                                         ),
-                                       ],
-                                     ),
-                                     const SizedBox(height: 6),
-                                     Row(
-                                       children: [
-                                         const Icon(Icons.phone_iphone_rounded, size: 14, color: Colors.grey),
-                                         const SizedBox(width: 4),
-                                         Text(phone, style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
-                                       ],
-                                     ),
-                                     if (email.isNotEmpty && email != '—') ...[
-                                       const SizedBox(height: 2),
-                                       Row(
-                                         children: [
-                                           const Icon(Icons.mail_outline_rounded, size: 14, color: Colors.grey),
-                                           const SizedBox(width: 4),
-                                           Text(email, style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
-                                         ],
-                                       ),
-                                     ],
-                                   ],
-                                 ),
-                               ),
-                           ],
-                         ),
-                          const Divider(height: 24),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.edit, size: 18),
-                                label: const Text('Edit Basic Info'),
-                                onPressed: () async {
-                                  final initial = _EditProfileInitial(
-                                    fullName: title == 'Unnamed User' ? '' : title,
-                                    email: (email == '—') ? '' : email,
-                                    role: role,
-                                  );
-                                  final updated = await showDialog<_EditProfileResult>(
-                                    context: context,
-                                    builder: (_) => _EditProfileDialog(initial: initial),
-                                  );
-                                  if (updated == null) return;
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Action Buttons Row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                backgroundColor: const Color(0xFFEFF6FF),
+                                foregroundColor: const Color(0xFF2563EB),
+                                side: const BorderSide(color: Color(0xFFBFDBFE)),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                              icon: const Icon(Icons.edit_note_rounded, size: 18),
+                              label: const Text(
+                                'Edit Basic Info',
+                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                              ),
+                              onPressed: () async {
+                                final initial = _EditProfileInitial(
+                                  fullName: title == 'Unnamed User' ? '' : title,
+                                  email: (email == '—') ? '' : email,
+                                  role: activeRole,
+                                );
+                                final updated = await showDialog<_EditProfileResult>(
+                                  context: context,
+                                  builder: (_) => _EditProfileDialog(initial: initial),
+                                );
+                                if (updated == null) return;
+
+                                try {
+                                  if (updated.fullName.trim().isNotEmpty &&
+                                      updated.fullName.trim() != (user.displayName ?? '')) {
+                                    await user.updateDisplayName(updated.fullName.trim());
+                                  }
+                                  if (updated.email.trim().isNotEmpty &&
+                                      updated.email.trim() != (user.email ?? '')) {
+                                    try {
+                                      await user.updateEmail(updated.email.trim());
+                                    } catch (_) {}
+                                  }
+
+                                  final updateMap = <String, dynamic>{
+                                    'full_name': updated.fullName.trim(),
+                                    'email': updated.email.trim(),
+                                    'role': updated.role,
+                                  };
+
+                                  await Prefs.I.setRole(updated.role);
+                                  if (context.mounted) {
+                                    context.read<RoleViewModel>().setRole(updated.role);
+                                  }
+
+                                  if (mounted) {
+                                    setState(() {
+                                      _apiProfile = {..._apiProfile, ...updateMap};
+                                    });
+                                  }
 
                                   try {
-                                    if (updated.fullName.trim().isNotEmpty &&
-                                        updated.fullName.trim() != (user.displayName ?? '')) {
-                                      await user.updateDisplayName(updated.fullName.trim());
-                                    }
-                                    if (updated.email.trim().isNotEmpty &&
-                                        updated.email.trim() != (user.email ?? '')) {
-                                      try {
-                                        await user.updateEmail(updated.email.trim());
-                                      } catch (_) {}
-                                    }
+                                    await ApiService.I.updateMe(updateMap);
+                                  } catch (_) {}
 
-                                    final updateMap = <String, dynamic>{
-                                      'full_name': updated.fullName.trim(),
-                                      'email': updated.email.trim(),
-                                      'role': updated.role,
-                                    };
-
-                                    await Prefs.I.setRole(updated.role);
-                                    if (context.mounted) {
-                                      context.read<RoleViewModel>().setRole(updated.role);
-                                    }
-
-                                    if (mounted) {
-                                      setState(() {
-                                        _apiProfile = {..._apiProfile, ...updateMap};
-                                      });
-                                    }
-
-                                    try {
-                                      await ApiService.I.updateMe(updateMap);
-                                    } catch (_) {}
-
-                                    if (!context.mounted) return;
-                                    AppSnack.show(context, 'Profile updated successfully!');
-                                  } catch (e) {
-                                    if (!context.mounted) return;
-                                    AppSnack.show(context, 'Failed to update: $e');
-                                  }
-                                },
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                                icon: const Icon(Icons.logout, size: 18),
-                                label: const Text('Sign out'),
-                                onPressed: () async {
-                                  await FirebaseAuth.instance.signOut();
                                   if (!context.mounted) return;
+                                  AppSnack.show(context, 'Profile updated successfully!');
+                                } catch (e) {
+                                  if (!context.mounted) return;
+                                  AppSnack.show(context, 'Failed to update: $e');
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                backgroundColor: const Color(0xFFFEF2F2),
+                                foregroundColor: const Color(0xFFEF4444),
+                                side: const BorderSide(color: Color(0xFFFECACA)),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                              icon: const Icon(Icons.logout_rounded, size: 18),
+                              label: const Text(
+                                'Sign out',
+                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                              ),
+                              onPressed: () async {
+                                try {
+                                  await ApiService.I.logout();
+                                } catch (_) {}
+                                await FirebaseAuth.instance.signOut();
+                                await Prefs.I.clearAll();
+                                if (context.mounted) {
+                                  context.read<RoleViewModel>().clearRole();
                                   Navigator.pushNamedAndRemoveUntil(
                                     context,
                                     NavRoutes.signIn,
                                     (route) => false,
                                   );
-                                },
-                              ),
-                            ],
+                                }
+                              },
+                            ),
                           ),
                         ],
                       ),
-                    ),
+                    ],
                   ),
+                ),
+              ),
 
-                  // ---------- Driver Documents & Vehicle Section ----------
+              // ---------- Verification Pending Banner ----------
+              if (isDriver && !isVerified) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFFCD34D)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.amber.withOpacity(0.08),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.hourglass_top_rounded, color: Color(0xFFD97706), size: 24),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Account Verification Pending',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                                color: Color(0xFF92400E),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Your driver credentials, license, and selfie are currently under review. Your account will be fully activated once verified by our team.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFFB45309),
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // ---------- Driver Documents & Vehicle Section ----------
                   if (isDriver) ...[
                     const SizedBox(height: 20),
                     Row(
@@ -540,13 +827,44 @@ class _ProfileBodyState extends State<_ProfileBody> {
                             ),
                             const SizedBox(height: 8),
                             if (driverSelfieUrl.isNotEmpty)
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: _buildSmartImage(
+                              GestureDetector(
+                                onTap: () => FullScreenImageViewer.show(
+                                  context,
                                   driverSelfieUrl,
-                                  height: 140,
-                                  width: double.infinity,
-                                  fit: BoxFit.cover,
+                                  title: 'Driver Selfie Preview',
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Stack(
+                                    alignment: Alignment.topRight,
+                                    children: [
+                                      _buildSmartImage(
+                                        driverSelfieUrl,
+                                        height: 160,
+                                        width: double.infinity,
+                                        fit: BoxFit.cover,
+                                      ),
+                                      Container(
+                                        margin: const EdgeInsets.all(8),
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.65),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.zoom_in_rounded, color: Colors.white, size: 14),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              'Tap to Preview',
+                                              style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               )
                             else
@@ -632,13 +950,38 @@ class _ProfileBodyState extends State<_ProfileBody> {
                                   scrollDirection: Axis.horizontal,
                                   itemCount: vehiclePhotos.length,
                                   separatorBuilder: (_, _) => const SizedBox(width: 8),
-                                  itemBuilder: (ctx, i) => ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: _buildSmartImage(
+                                  itemBuilder: (ctx, i) => GestureDetector(
+                                    onTap: () => FullScreenImageViewer.show(
+                                      context,
                                       vehiclePhotos[i],
-                                      width: 120,
-                                      height: 100,
-                                      fit: BoxFit.cover,
+                                      title: 'Vehicle Photo ${i + 1}',
+                                    ),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(10),
+                                      child: Stack(
+                                        alignment: Alignment.topRight,
+                                        children: [
+                                          _buildSmartImage(
+                                            vehiclePhotos[i],
+                                            width: 120,
+                                            height: 100,
+                                            fit: BoxFit.cover,
+                                          ),
+                                          Container(
+                                            margin: const EdgeInsets.all(4),
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: const BoxDecoration(
+                                              color: Colors.black54,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.zoom_in_rounded,
+                                              color: Colors.white,
+                                              size: 12,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -769,12 +1112,30 @@ class _ProfileBodyState extends State<_ProfileBody> {
             children: [
               TextField(
                 controller: natCtl,
-                decoration: const InputDecoration(labelText: 'National ID / Ghana Card'),
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9\-]')),
+                  LengthLimitingTextInputFormatter(20),
+                  TextInputFormatter.withFunction((_, newVal) => newVal.copyWith(text: newVal.text.toUpperCase())),
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'National ID / ECOWAS Card',
+                  hintText: 'e.g. GHA-727278797-5 or 12345678901',
+                ),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: licCtl,
-                decoration: const InputDecoration(labelText: "Driver's License Number"),
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9\-]')),
+                  LengthLimitingTextInputFormatter(18),
+                  TextInputFormatter.withFunction((_, newVal) => newVal.copyWith(text: newVal.text.toUpperCase())),
+                ],
+                decoration: const InputDecoration(
+                  labelText: "Driver's License Number",
+                  hintText: 'DL-12345678',
+                ),
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
@@ -795,6 +1156,12 @@ class _ProfileBodyState extends State<_ProfileBody> {
               const SizedBox(height: 8),
               TextField(
                 controller: pltCtl,
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9\-]')),
+                  LengthLimitingTextInputFormatter(12),
+                  TextInputFormatter.withFunction((_, newVal) => newVal.copyWith(text: newVal.text.toUpperCase())),
+                ],
                 decoration: const InputDecoration(labelText: 'License Plate (e.g. GW-9821-25)'),
               ),
             ],
@@ -802,18 +1169,39 @@ class _ProfileBodyState extends State<_ProfileBody> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save Credentials')),
+          FilledButton(
+            onPressed: () {
+              final nat = natCtl.text.trim().toUpperCase();
+              final lic = licCtl.text.trim().toUpperCase();
+              final plt = pltCtl.text.trim().toUpperCase();
+              
+              if (nat.isNotEmpty && (nat.length < 6 || nat.length > 20 || !RegExp(r'^[A-Z0-9\-]+$').hasMatch(nat))) {
+                AppSnack.show(ctx, 'National ID must be 6-20 alphanumeric characters');
+                return;
+              }
+              if (lic.isNotEmpty && (lic.length < 6 || !RegExp(r'^[A-Z0-9\-]+$').hasMatch(lic))) {
+                AppSnack.show(ctx, 'License number must be 6-18 characters');
+                return;
+              }
+              if (plt.isNotEmpty && (plt.length < 4 || !RegExp(r'^[A-Z0-9\-]+$').hasMatch(plt))) {
+                AppSnack.show(ctx, 'License plate format invalid (e.g. GW-9821-25)');
+                return;
+              }
+              Navigator.pop(ctx, true);
+            },
+            child: const Text('Save Credentials'),
+          ),
         ],
       ),
     );
 
     if (save == true) {
       final updateMap = {
-        'national_id': natCtl.text.trim(),
-        'license_number': licCtl.text.trim(),
+        'national_id': natCtl.text.trim().toUpperCase(),
+        'license_number': licCtl.text.trim().toUpperCase(),
         'vehicle_type': vType,
         'vehicle_model': modCtl.text.trim(),
-        'license_plate': pltCtl.text.trim(),
+        'license_plate': pltCtl.text.trim().toUpperCase(),
       };
 
       try {
@@ -836,6 +1224,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
   }
 }
 
+// ---- SAVED LOCATIONS LIST ------------------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
 class _LocationsList extends StatelessWidget {
   final _svc = LocationService();
   _LocationsList();
@@ -847,27 +1236,59 @@ class _LocationsList extends StatelessWidget {
       builder: (ctx, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
+            padding: EdgeInsets.symmetric(vertical: 32),
             child: Center(child: CircularProgressIndicator()),
           );
         }
         final items = snap.data ?? const [];
         if (items.isEmpty) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 24),
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.02),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
             child: Column(
               children: [
-                const Icon(Icons.location_off_outlined, size: 40),
-                const SizedBox(height: 8),
-                Text(
-                  'No saved locations yet',
-                  style: Theme.of(context).textTheme.bodyMedium,
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEEF2FF),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFC7D2FE), width: 1.5),
+                  ),
+                  child: const Icon(
+                    Icons.location_off_rounded,
+                    size: 30,
+                    color: Color(0xFF3D5AFE),
+                  ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Add your Home, Work, or favorite places for quicker bookings.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                const SizedBox(height: 14),
+                const Text(
+                  'No saved locations yet',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Add your Home, Work, or favorite places for quicker 1-tap bookings.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF64748B),
+                    height: 1.4,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -880,7 +1301,7 @@ class _LocationsList extends StatelessWidget {
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: items.length,
-          separatorBuilder: (ctx2, _) => const SizedBox(height: 8),
+          separatorBuilder: (ctx2, _) => const SizedBox(height: 10),
           itemBuilder: (itemCtx, i) {
             final loc = items[i];
             return Dismissible(
@@ -890,10 +1311,18 @@ class _LocationsList extends StatelessWidget {
                 alignment: Alignment.centerRight,
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(16),
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFFECACA)),
                 ),
-                child: const Icon(Icons.delete, color: Colors.red),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text('Delete', style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.bold)),
+                    SizedBox(width: 8),
+                    Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444)),
+                  ],
+                ),
               ),
               confirmDismiss: (direction) async {
                 return await showDialog<bool>(
@@ -907,6 +1336,7 @@ class _LocationsList extends StatelessWidget {
                             child: const Text('Cancel'),
                           ),
                           FilledButton(
+                            style: FilledButton.styleFrom(backgroundColor: Colors.red),
                             onPressed: () => Navigator.pop(dialogCtx, true),
                             child: const Text('Delete'),
                           ),
@@ -976,23 +1406,86 @@ class _LocationTile extends StatelessWidget {
     }
   }
 
+  Color get _categoryColor {
+    switch (loc.type) {
+      case 'home':
+        return const Color(0xFF2563EB);
+      case 'work':
+        return const Color(0xFF7C3AED);
+      default:
+        return const Color(0xFF059669);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final chipColor = loc.isDefault
-        ? Theme.of(context).colorScheme.primary.withOpacity(0.12)
-        : Theme.of(context).colorScheme.surfaceContainerHighest;
-
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: loc.isDefault ? const Color(0xFF3D5AFE) : const Color(0xFFE2E8F0),
+          width: loc.isDefault ? 1.5 : 1.0,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: ListTile(
-        leading: CircleAvatar(backgroundColor: chipColor, child: Icon(_icon)),
-        title: Text(loc.label.isNotEmpty ? loc.label : 'Saved place'),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        leading: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: _categoryColor.withOpacity(0.1),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(_icon, color: _categoryColor, size: 22),
+        ),
+        title: Row(
+          children: [
+            Text(
+              loc.label.isNotEmpty ? loc.label : 'Saved place',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+            if (loc.isDefault) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFBFDBFE)),
+                ),
+                child: const Text(
+                  'DEFAULT',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF2563EB),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
         subtitle: Text(
           loc.address,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
         ),
         trailing: PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert_rounded, color: Color(0xFF64748B)),
           onSelected: (v) {
             if (v == 'default') onSetDefault();
             if (v == 'edit') onEdit();
@@ -1001,9 +1494,24 @@ class _LocationTile extends StatelessWidget {
             if (!loc.isDefault)
               const PopupMenuItem(
                 value: 'default',
-                child: Text('Set as default'),
+                child: Row(
+                  children: [
+                    Icon(Icons.star_outline_rounded, size: 18),
+                    SizedBox(width: 8),
+                    Text('Set as default'),
+                  ],
+                ),
               ),
-            const PopupMenuItem(value: 'edit', child: Text('Edit name/type')),
+            const PopupMenuItem(
+              value: 'edit',
+              child: Row(
+                children: [
+                  Icon(Icons.edit_outlined, size: 18),
+                  SizedBox(width: 8),
+                  Text('Edit name/type'),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -1184,7 +1692,7 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Edit Profile & Account Type'),
+      title: const Text('Edit Profile Details'),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -1208,30 +1716,6 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
                 validator: (v) => _looksLikeEmail(v ?? '')
                     ? null
                     : 'Enter a valid email (or leave empty)',
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Account Role',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              const SizedBox(height: 6),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(
-                    value: 'customer',
-                    label: Text('Customer'),
-                    icon: Icon(Icons.person_rounded),
-                  ),
-                  ButtonSegment(
-                    value: 'driver',
-                    label: Text('Driver'),
-                    icon: Icon(Icons.local_shipping_rounded),
-                  ),
-                ],
-                selected: {_role},
-                onSelectionChanged: (set) {
-                  setState(() => _role = set.first);
-                },
               ),
             ],
           ),

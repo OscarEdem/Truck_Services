@@ -2,6 +2,7 @@
 // CargoMate Mobile App - Pure REST API Role View Model
 // ====================================================================================================================
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import '../services/api_service.dart';
@@ -19,7 +20,7 @@ class RoleViewModel extends ChangeNotifier {
   String? _userId;
   String? get userId => _userId;
 
-  /// Bootstraps active user role from Go REST API gateway / Prefs
+  /// Bootstraps active user role directly from Go REST API gateway / Firestore for current UID
   Future<void> bootstrap() async {
     _loading = true;
     notifyListeners();
@@ -35,18 +36,39 @@ class RoleViewModel extends ChangeNotifier {
       }
 
       _userId = user.uid;
-      final savedRole = await Prefs.I.getRole();
-      if (savedRole != null && savedRole.isNotEmpty) {
-        _role = savedRole;
+
+      // 1. Primary: Fetch user profile from Go REST API gateway
+      String? resolvedRole;
+      try {
+        final me = await ApiService.I.getMe();
+        final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
+        resolvedRole = (userObj['role'] as String? ?? me['role'] as String?)?.trim().toLowerCase();
+      } catch (e) {
+        if (kDebugMode) print('[ROLE_VM] ApiService getMe error: $e');
       }
 
-      final me = await ApiService.I.getMe();
-      final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
-      final apiRole = (userObj['role'] as String? ?? me['role'] as String?)?.trim().toLowerCase();
+      // 2. Secondary: Fallback to Firestore profiles/{uid}
+      if (resolvedRole == null || resolvedRole.isEmpty) {
+        try {
+          final doc = await FirebaseFirestore.instance.collection('profiles').doc(user.uid).get();
+          if (doc.exists) {
+            resolvedRole = (doc.data()?['role'] as String?)?.trim().toLowerCase();
+          }
+        } catch (e) {
+          if (kDebugMode) print('[ROLE_VM] Firestore profile read error: $e');
+        }
+      }
 
-      if (apiRole != null && apiRole.isNotEmpty) {
-        _role = apiRole;
-        await Prefs.I.setRole(_role);
+      // 3. Fallback: Local storage for this specific UID
+      if (resolvedRole == null || resolvedRole.isEmpty) {
+        resolvedRole = await Prefs.I.getRoleForUser(user.uid);
+      }
+
+      if (resolvedRole != null && resolvedRole.isNotEmpty) {
+        _role = resolvedRole;
+        await Prefs.I.setRoleForUser(user.uid, _role);
+      } else {
+        _role = 'customer';
       }
     } catch (e) {
       if (kDebugMode) {
@@ -58,17 +80,24 @@ class RoleViewModel extends ChangeNotifier {
     }
   }
 
-  /// Change role locally (does not save to Firestore yet)
+  /// Change role locally
   void setRole(String newRole) {
     _role = newRole;
+    final uid = _auth.currentUser?.uid;
+    if (uid != null && uid.isNotEmpty) {
+      Prefs.I.setRoleForUser(uid, newRole);
+    }
     notifyListeners();
   }
 
   /// Persist new role via Go REST API gateway & local Prefs
   Future<void> saveRole(String newRole) async {
     try {
+      final uid = _auth.currentUser?.uid;
       await ApiService.I.updateMe({'role': newRole});
-      await Prefs.I.setRole(newRole);
+      if (uid != null && uid.isNotEmpty) {
+        await Prefs.I.setRoleForUser(uid, newRole);
+      }
       _role = newRole;
       notifyListeners();
     } catch (e) {
@@ -78,17 +107,8 @@ class RoleViewModel extends ChangeNotifier {
     }
   }
 
-  /// Reset role to default customer
-  Future<void> clearRole() async {
-    try {
-      await ApiService.I.updateMe({'role': 'customer'});
-      await Prefs.I.setRole('customer');
-    } catch (e) {
-      if (kDebugMode) {
-        print('Error clearing role: $e');
-      }
-    }
-
+  /// Reset in-memory role state on logout (NEVER mutate backend DB on logout!)
+  void clearRole() {
     _role = 'customer';
     _userId = null;
     _loading = false;

@@ -300,155 +300,451 @@ class _BookingScreenState extends State<BookingScreen> with RouteAware {
   }
 
   Widget _vehicleSegmented() {
-    return SegmentedButton<String>(
-      segments: const [
-        ButtonSegment<String>(
-          value: 'bike',
-          label: Text('Bike'),
-          icon: Icon(Icons.pedal_bike),
-        ),
-        ButtonSegment<String>(
-          value: 'van',
-          label: Text('Van'),
-          icon: Icon(Icons.local_shipping_outlined),
-        ),
-        ButtonSegment<String>(
-          value: 'truck',
-          label: Text('Truck'),
-          icon: Icon(Icons.fire_truck_outlined),
-        ),
-      ],
-      selected: {_vehicle},
-      onSelectionChanged: (s) => setState(() => _vehicle = s.first),
-      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+    final types = [
+      ('bike', 'Bike', Icons.two_wheeler_rounded, 'Max 20kg'),
+      ('van', 'Van', Icons.local_shipping_rounded, 'Max 500kg'),
+      ('truck', 'Truck', Icons.fire_truck_rounded, 'Max 2000kg'),
+    ];
+
+    return Row(
+      children: types.map((item) {
+        final key = item.$1;
+        final name = item.$2;
+        final icon = item.$3;
+        final cap = item.$4;
+        final isSelected = _vehicle == key;
+
+        return Expanded(
+          child: GestureDetector(
+            onTap: () => setState(() => _vehicle = key),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? Colors.white : const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isSelected ? const Color(0xFF2563EB) : const Color(0xFFE2E8F0),
+                  width: isSelected ? 2 : 1,
+                ),
+                boxShadow: isSelected
+                    ? [
+                        BoxShadow(
+                          color: const Color(0xFF2563EB).withOpacity(0.18),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ]
+                    : [],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon,
+                    size: 26,
+                    color: isSelected ? const Color(0xFF2563EB) : const Color(0xFF64748B),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    name,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    cap,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected ? const Color(0xFF2563EB) : const Color(0xFF94A3B8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('[BOOK] build ${_navInfo(context)}');
-    final cs = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final hasPickup = _pickupCtl.text.trim().isNotEmpty;
+    final hasDrop = _dropCtl.text.trim().isNotEmpty;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Book a Delivery'), centerTitle: true),
+      backgroundColor: const Color(0xFFF8FAFC),
+      appBar: AppBar(
+        title: const Text(
+          'Book a Delivery',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+            color: Colors.white,
+          ),
+        ),
+        centerTitle: true,
+        backgroundColor: const Color(0xFF1565C0),
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
           children: [
-            // Pickers
-            Text('Locations', style: textTheme.titleMedium),
-            const SizedBox(height: 8),
-
-            // Pickup (readonly TextField – opens map)
-            TextField(
-              controller: _pickupCtl,
-              readOnly: true,
-              onTap: () => _pickOnMap(isPickup: true),
-              decoration: InputDecoration(
-                labelText: 'Pickup',
-                hintText: 'Choose on map',
-                prefixIcon: const Icon(Icons.place_outlined),
-                suffixIcon: IconButton(
-                  tooltip: 'Pick on map',
-                  onPressed: () => _pickOnMap(isPickup: true),
-                  icon: const Icon(Icons.map_outlined),
-                ),
+            // ---------- LOCATION ROUTE CARD ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+            const Text(
+              'Locations',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0F172A),
+                letterSpacing: 0.2,
               ),
             ),
-            const SizedBox(height: 12),
-
-            // Drop (readonly)
-            TextField(
-              controller: _dropCtl,
-              readOnly: true,
-              onTap: () => _pickOnMap(isPickup: false),
-              decoration: InputDecoration(
-                labelText: 'Drop',
-                hintText: 'Choose on map',
-                prefixIcon: const Icon(Icons.flag_outlined),
-                suffixIcon: IconButton(
-                  tooltip: 'Pick on map',
-                  onPressed: () => _pickOnMap(isPickup: false),
-                  icon: const Icon(Icons.map_outlined),
-                ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
-            ),
-
-            const SizedBox(height: 20),
-            Text('Vehicle', style: textTheme.titleMedium),
-            const SizedBox(height: 8),
-            _vehicleSegmented(),
-
-            const SizedBox(height: 20),
-            Text('Loaders', style: textTheme.titleMedium),
-            const SizedBox(height: 8),
-
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Need loaders?'),
-              value: _needsLoaders,
-              onChanged: (v) => setState(() => _needsLoaders = v),
-              secondary: const Icon(Icons.groups_2_outlined),
-            ),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              child: !_needsLoaders
-                  ? const SizedBox.shrink()
-                  : Row(
-                      key: const ValueKey('loaders-row'),
+              child: Row(
+                children: [
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2563EB).withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF2563EB),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Container(
+                        width: 2,
+                        height: 26,
+                        color: const Color(0xFF93C5FD),
+                      ),
+                      const SizedBox(height: 2),
+                      Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF4F46E5).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF4F46E5),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Count', style: TextStyle(fontSize: 16)),
-                        const SizedBox(width: 12),
-                        FilledButton.tonalIcon(
-                          onPressed: () {
-                            if (_loaderCount > 1) {
-                              setState(() => _loaderCount--);
-                            }
-                          },
-                          icon: const Icon(Icons.remove),
-                          label: const Text(''),
-                          style: const ButtonStyle(
-                            minimumSize: WidgetStatePropertyAll(Size(40, 40)),
-                            padding: WidgetStatePropertyAll(
-                              EdgeInsets.symmetric(horizontal: 8),
+                        InkWell(
+                          onTap: () => _pickOnMap(isPickup: true),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'PICKUP LOCATION',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF2563EB),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  hasPickup ? _pickupCtl.text : 'Tap to select pickup location',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: hasPickup ? FontWeight.w700 : FontWeight.w500,
+                                    color: hasPickup ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Chip(
-                            label: Text('$_loaderCount'),
-                            avatar: const Icon(Icons.badge_outlined),
-                          ),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: () => setState(() => _loaderCount++),
-                          icon: const Icon(Icons.add),
-                          label: const Text(''),
-                          style: const ButtonStyle(
-                            minimumSize: WidgetStatePropertyAll(Size(40, 40)),
-                            padding: WidgetStatePropertyAll(
-                              EdgeInsets.symmetric(horizontal: 8),
+                        const Divider(height: 12, thickness: 1, color: Color(0xFFF1F5F9)),
+                        InkWell(
+                          onTap: () => _pickOnMap(isPickup: false),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'DROP-OFF DESTINATION',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF4F46E5),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  hasDrop ? _dropCtl.text : 'Tap to select destination',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: hasDrop ? FontWeight.w700 : FontWeight.w500,
+                                    color: hasDrop ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          'GHS ${_vehicleLoaderRate(_vehicle).toStringAsFixed(0)} each',
-                          style: textTheme.bodyMedium?.copyWith(
-                            color: cs.onSurfaceVariant,
                           ),
                         ),
                       ],
                     ),
+                  ),
+                ],
+              ),
             ),
 
             const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _busy ? null : _onBookPressed,
-              icon: const Icon(Icons.check),
-              label: const Text('Book delivery'),
+
+            // ---------- VEHICLE TYPE SELECTION ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+            const Text(
+              'Vehicle',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0F172A),
+                letterSpacing: 0.2,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _vehicleSegmented(),
+
+            const SizedBox(height: 24),
+
+            // ---------- LOADERS SECTION ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+            const Text(
+              'Loaders',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0F172A),
+                letterSpacing: 0.2,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.groups_2_rounded,
+                          color: Color(0xFF2563EB),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Need loaders for your item?',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                      ),
+                      Switch.adaptive(
+                        value: _needsLoaders,
+                        activeColor: const Color(0xFF2563EB),
+                        onChanged: (v) => setState(() => _needsLoaders = v),
+                      ),
+                    ],
+                  ),
+                  if (_needsLoaders) ...[
+                    const Divider(height: 20, thickness: 1, color: Color(0xFFF1F5F9)),
+                    Row(
+                      children: [
+                        const Text(
+                          'Loader Count',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                        const Spacer(),
+                        InkWell(
+                          onTap: () {
+                            if (_loaderCount > 1) {
+                              setState(() => _loaderCount--);
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF1F5F9),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.remove_rounded, size: 18, color: Color(0xFF0F172A)),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                          child: Text(
+                            '$_loaderCount',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF2563EB),
+                            ),
+                          ),
+                        ),
+                        InkWell(
+                          onTap: () => setState(() => _loaderCount++),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF1F5F9),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.add_rounded, size: 18, color: Color(0xFF0F172A)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'GH₵ ${_vehicleLoaderRate(_vehicle).toStringAsFixed(0)} per loader',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 32),
+
+            // ---------- GRADIENT CTA BUTTON ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+            Container(
+              height: 54,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(27),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF3D5AFE), Color(0xFF2563EB)],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF2563EB).withOpacity(0.35),
+                    blurRadius: 14,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: ElevatedButton.icon(
+                onPressed: _busy ? null : _onBookPressed,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(27),
+                  ),
+                ),
+                icon: _busy
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                      )
+                    : const Icon(Icons.check_circle_rounded, color: Colors.white, size: 22),
+                label: Text(
+                  _busy ? 'PROCESSING...' : 'BOOK DELIVERY NOW',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
             ),
           ],
         ),

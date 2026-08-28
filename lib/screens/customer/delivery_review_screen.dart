@@ -1,7 +1,9 @@
 // lib/screens/customer/delivery_review_screen.dart
 import 'package:cargomate_v3/screens/customer/Checkout_screen.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart' as fm;
+import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:latlong2/latlong.dart';
 
 /// Helper: cheap nav context info (for your logs)
@@ -129,9 +131,8 @@ class DeliveryReviewScreen extends StatefulWidget {
 
 class _DeliveryReviewScreenState extends State<DeliveryReviewScreen>
     with RouteAware {
-  final fm.MapController _mapCtl = fm.MapController();
+  gmaps.GoogleMapController? _gmapCtl;
   late Map<String, dynamic> d;
-  final List<fm.Polyline> _polylines = [];
 
   /// Convenience getters (accepting whatever comes from HomePage)
   LatLng? get _pickup {
@@ -152,15 +153,6 @@ class _DeliveryReviewScreenState extends State<DeliveryReviewScreen>
   void initState() {
     super.initState();
     d = Map<String, dynamic>.from(widget.delivery);
-
-    // Attach polyline if at least 2 points
-    final pts = widget.polyline;
-    if (pts.length >= 2) {
-      _polylines.add(
-        fm.Polyline(points: pts, strokeWidth: 5.0, color: Colors.blue),
-      );
-    }
-
     debugPrint('[REVIEW] initState keys=${d.keys.toList()}');
   }
 
@@ -174,18 +166,41 @@ class _DeliveryReviewScreenState extends State<DeliveryReviewScreen>
   }
 
   Future<void> _fitBounds() async {
-    final pts = <LatLng>[
-      if (_pickup != null) _pickup!,
-      if (_drop != null) _drop!,
-      for (final pl in _polylines) ...pl.points,
+    if (_gmapCtl == null) return;
+    final pts = <gmaps.LatLng>[
+      if (_pickup != null) gmaps.LatLng(_pickup!.latitude, _pickup!.longitude),
+      if (_drop != null) gmaps.LatLng(_drop!.latitude, _drop!.longitude),
+      ...widget.polyline.map((p) => gmaps.LatLng(p.latitude, p.longitude)),
     ];
     if (pts.isEmpty) return;
-    _mapCtl.fitCamera(
-      fm.CameraFit.bounds(
-        bounds: fm.LatLngBounds.fromPoints(pts),
-        padding: const EdgeInsets.all(60),
-      ),
-    );
+
+    if (pts.length == 1) {
+      await _gmapCtl!.animateCamera(
+        gmaps.CameraUpdate.newLatLngZoom(pts.first, 14),
+      );
+    } else {
+      double minLat = pts.first.latitude;
+      double maxLat = pts.first.latitude;
+      double minLng = pts.first.longitude;
+      double maxLng = pts.first.longitude;
+
+      for (final p in pts) {
+        if (p.latitude < minLat) minLat = p.latitude;
+        if (p.latitude > maxLat) maxLat = p.latitude;
+        if (p.longitude < minLng) minLng = p.longitude;
+        if (p.longitude > maxLng) maxLng = p.longitude;
+      }
+
+      await _gmapCtl!.animateCamera(
+        gmaps.CameraUpdate.newLatLngBounds(
+          gmaps.LatLngBounds(
+            southwest: gmaps.LatLng(minLat, minLng),
+            northeast: gmaps.LatLng(maxLat, maxLng),
+          ),
+          50,
+        ),
+      );
+    }
   }
 
   void _onBackPressed() {
@@ -231,239 +246,425 @@ class _DeliveryReviewScreenState extends State<DeliveryReviewScreen>
     final createdAt = _asDate(d['created_at']);
     final status = (d['status'] ?? 'pending').toString();
 
-    // --- Map markers ---------------------------------------------------------
-    final markers = <fm.Marker>[
-      if (_pickup != null)
-        fm.Marker(
-          point: _pickup!,
-          width: 40,
-          height: 40,
-          child: const Icon(
-            Icons.radio_button_checked,
-            color: Colors.green,
-            size: 28,
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1565C0),
+        elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+          onPressed: _onBackPressed,
+        ),
+        title: const Text(
+          'Review Delivery',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
           ),
         ),
-      if (_drop != null)
-        fm.Marker(
-          point: _drop!,
-          width: 44,
-          height: 44,
-          child: const Icon(Icons.place, color: Colors.red, size: 32),
-        ),
-    ];
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Review Delivery'), centerTitle: true),
+      ),
       body: Column(
         children: [
-          // --- Map -----------------------------------------------------------
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: SizedBox(
-                height: 260,
-                child: Stack(
-                  children: [
-                    fm.FlutterMap(
-                      mapController: _mapCtl,
-                      options: fm.MapOptions(
-                        initialCenter:
-                            _pickup ?? _drop ?? const LatLng(5.6037, -0.1870),
-                        initialZoom: 12,
-                        onMapReady: () async {
-                          await Future.delayed(
-                            const Duration(milliseconds: 250),
-                          );
-                          await _fitBounds();
-                        },
-                      ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              children: [
+                // --- Map Preview Card ----------------------------------------
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    height: 220,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Stack(
                       children: [
-                        fm.TileLayer(
-                          urlTemplate:
-                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                          userAgentPackageName: 'com.example.cargomate',
-                          maxZoom: 19,
-                        ),
-                        if (_polylines.isNotEmpty)
-                          fm.PolylineLayer(polylines: _polylines),
-                        if (markers.isNotEmpty)
-                          fm.MarkerLayer(markers: markers),
-                        const fm.RichAttributionWidget(
-                          attributions: [
-                            fm.TextSourceAttribution(
-                              '© OpenStreetMap contributors',
+                        gmaps.GoogleMap(
+                          gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                            Factory<OneSequenceGestureRecognizer>(
+                              () => EagerGestureRecognizer(),
                             ),
-                          ],
+                          },
+                          initialCameraPosition: gmaps.CameraPosition(
+                            target: _pickup != null
+                                ? gmaps.LatLng(_pickup!.latitude, _pickup!.longitude)
+                                : (_drop != null
+                                    ? gmaps.LatLng(_drop!.latitude, _drop!.longitude)
+                                    : const gmaps.LatLng(5.6037, -0.1870)),
+                            zoom: 12,
+                          ),
+                          myLocationEnabled: false,
+                          myLocationButtonEnabled: false,
+                          zoomControlsEnabled: false,
+                          onMapCreated: (controller) async {
+                            _gmapCtl = controller;
+                            await Future.delayed(
+                              const Duration(milliseconds: 250),
+                            );
+                            await _fitBounds();
+                          },
+                          polylines: {
+                            if (widget.polyline.isNotEmpty)
+                              gmaps.Polyline(
+                                polylineId: const gmaps.PolylineId('review_route'),
+                                points: widget.polyline
+                                    .map((p) => gmaps.LatLng(p.latitude, p.longitude))
+                                    .toList(),
+                                color: const Color(0xFF2563EB),
+                                width: 5,
+                              ),
+                          },
+                          markers: {
+                            if (_pickup != null)
+                              gmaps.Marker(
+                                markerId: const gmaps.MarkerId('pickup'),
+                                position: gmaps.LatLng(_pickup!.latitude, _pickup!.longitude),
+                                icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                                  gmaps.BitmapDescriptor.hueAzure,
+                                ),
+                              ),
+                            if (_drop != null)
+                              gmaps.Marker(
+                                markerId: const gmaps.MarkerId('drop'),
+                                position: gmaps.LatLng(_drop!.latitude, _drop!.longitude),
+                                icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                                  gmaps.BitmapDescriptor.hueViolet,
+                                ),
+                              ),
+                          },
+                        ),
+                        // Zoom Controls
+                        Positioned(
+                          right: 12,
+                          top: 12,
+                          child: Column(
+                            children: [
+                              FloatingActionButton.small(
+                                heroTag: 'rev_zoom_in',
+                                backgroundColor: Colors.white,
+                                foregroundColor: const Color(0xFF1565C0),
+                                onPressed: () {
+                                  _gmapCtl?.animateCamera(gmaps.CameraUpdate.zoomIn());
+                                },
+                                child: const Icon(Icons.add_rounded),
+                              ),
+                              const SizedBox(height: 8),
+                              FloatingActionButton.small(
+                                heroTag: 'rev_zoom_out',
+                                backgroundColor: Colors.white,
+                                foregroundColor: const Color(0xFF1565C0),
+                                onPressed: () {
+                                  _gmapCtl?.animateCamera(gmaps.CameraUpdate.zoomOut());
+                                },
+                                child: const Icon(Icons.remove_rounded),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
-                    // Zoom
-                    Positioned(
-                      right: 12,
-                      top: 12,
-                      child: Column(
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // --- Details Card --------------------------------------------
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Headline row: Price + Vehicle Badge
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          FloatingActionButton.small(
-                            heroTag: 'rev_zoom_in',
-                            onPressed: () {
-                              final cam = _mapCtl.camera;
-                              _mapCtl.move(cam.center, cam.zoom + 1);
-                            },
-                            child: const Icon(Icons.add),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'TOTAL QUOTE',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF64748B),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'GHS ${_fmtMoney(priceTotal)}',
+                                style: const TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF1565C0),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 8),
-                          FloatingActionButton.small(
-                            heroTag: 'rev_zoom_out',
-                            onPressed: () {
-                              final cam = _mapCtl.camera;
-                              _mapCtl.move(cam.center, cam.zoom - 1);
-                            },
-                            child: const Icon(Icons.remove),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEFF6FF),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFDBEAFE)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.local_shipping_rounded, color: Color(0xFF2563EB), size: 18),
+                                const SizedBox(width: 6),
+                                Text(
+                                  vehicle.toUpperCase(),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF1D4ED8),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
 
-          // --- Details card ---------------------------------------------------
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Card.filled(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Headline row
-                    Row(
-                      children: [
-                        Text(
-                          'GHS ${_fmtMoney(priceTotal)}',
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                          ),
+                      const SizedBox(height: 16),
+
+                      // Meta Pills
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          if (distanceKm != null)
+                            _buildPill(Icons.route_rounded, '${_fmtKm(distanceKm)} km'),
+                          if (etaMin != null)
+                            _buildPill(Icons.timer_rounded, 'Est. Time ~ ${_fmtMin(etaMin)} min'),
+                          if (needsLoaders)
+                            _buildPill(Icons.groups_2_rounded, '$loadersCnt Loader${loadersCnt > 1 ? 's' : ''}'),
+                          if (plannedAt != null)
+                            _buildPill(Icons.event_rounded, 'Planned: ${_fmtWhen(plannedAt)}'),
+                          if (createdAt != null)
+                            _buildPill(Icons.schedule_rounded, 'Created: ${_fmtWhen(createdAt)}'),
+                          _buildPill(Icons.info_outline_rounded, 'Status: ${status.toUpperCase()}'),
+                          if (usedFallback)
+                            _buildPill(Icons.analytics_outlined, 'Estimated Route'),
+                        ],
+                      ),
+
+                      if (priceBase != null || needsLoaders) ...[
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 14),
+                          child: Divider(color: Color(0xFFF1F5F9), height: 1),
                         ),
-                        const SizedBox(width: 12),
-                        Chip(
-                          label: Text(vehicle),
-                          avatar: const Icon(Icons.local_shipping_outlined),
+                        Row(
+                          children: [
+                            if (priceBase != null)
+                              Expanded(
+                                child: Text(
+                                  'Base Rate: GHS ${_fmtMoney(priceBase)}',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF475569),
+                                  ),
+                                ),
+                              ),
+                            if (needsLoaders)
+                              Expanded(
+                                child: Text(
+                                  'Loaders ($loadersCnt): GHS ${_fmtMoney(loadersFee)}',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF475569),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
-                        const Spacer(),
-                        if (usedFallback)
-                          const Chip(
-                            label: Text('Estimated'),
-                            avatar: Icon(Icons.info_outline),
-                          ),
                       ],
-                    ),
-                    const SizedBox(height: 8),
 
-                    // Meta row (distance / ETA / planned / status)
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: [
-                        if (distanceKm != null)
-                          Chip(
-                            label: Text('${_fmtKm(distanceKm)} km'),
-                            avatar: const Icon(Icons.route_outlined),
-                          ),
-                        if (etaMin != null)
-                          Chip(
-                            label: Text('ETA ~ ${_fmtMin(etaMin)} min'),
-                            avatar: const Icon(Icons.timer_outlined),
-                          ),
-                        if (plannedAt != null)
-                          Chip(
-                            label: Text('Planned • ${_fmtWhen(plannedAt)}'),
-                            avatar: const Icon(Icons.event_outlined),
-                          ),
-                        Chip(
-                          label: Text('Status • $status'),
-                          avatar: const Icon(Icons.info_outline),
-                        ),
-                        if (createdAt != null)
-                          Chip(
-                            label: Text('Created • ${_fmtWhen(createdAt)}'),
-                            avatar: const Icon(Icons.schedule_outlined),
-                          ),
-                      ],
-                    ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 14),
+                        child: Divider(color: Color(0xFFF1F5F9), height: 1),
+                      ),
 
-                    const SizedBox(height: 8),
-                    const Divider(),
-
-                    // Price breakdown
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 6,
-                      children: [
-                        if (priceBase != null)
-                          Chip(
-                            label: Text('Base: GHS ${_fmtMoney(priceBase)}'),
-                            avatar: const Icon(Icons.straighten_outlined),
-                          ),
-                        if (needsLoaders)
-                          Chip(
-                            label: Text(
-                              'Loaders ($loadersCnt): GHS ${_fmtMoney(loadersFee)}',
+                      // Addresses Route Display
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            margin: const EdgeInsets.only(top: 4, right: 12),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF10B981),
+                              shape: BoxShape.circle,
                             ),
-                            avatar: const Icon(Icons.groups_2_outlined),
                           ),
-                      ],
-                    ),
-
-                    const Divider(height: 24),
-
-                    // Addresses
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.place, color: Colors.green),
-                      title: const Text('Pickup'),
-                      subtitle: Text(pickupAddr),
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.flag, color: Colors.red),
-                      title: const Text('Drop'),
-                      subtitle: Text(dropAddr),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          const Spacer(),
-
-          // Actions
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.arrow_back),
-                    label: const Text('Back'),
-                    onPressed: _onBackPressed,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    icon: const Icon(Icons.lock_open),
-                    label: const Text('Proceed to Checkout'),
-                    onPressed: _goToCheckout,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'PICKUP LOCATION',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  pickupAddr,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        margin: const EdgeInsets.only(left: 4, top: 4, bottom: 4),
+                        height: 20,
+                        width: 2,
+                        color: const Color(0xFFCBD5E1),
+                      ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            margin: const EdgeInsets.only(top: 4, right: 12),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFEF4444),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'DROP-OFF LOCATION',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  dropAddr,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               ],
+            ),
+          ),
+
+          // --- Bottom Action Container ----------------------------------------
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+            ),
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF1565C0), Color(0xFF2563EB)],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF2563EB).withOpacity(0.3),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    onPressed: _goToCheckout,
+                    icon: const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+                    label: const Text(
+                      'Proceed to Checkout',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPill(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: const Color(0xFF475569)),
+          const SizedBox(width: 5),
+          Text(
+            text,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF334155),
             ),
           ),
         ],

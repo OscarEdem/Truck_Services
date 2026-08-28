@@ -76,24 +76,40 @@ class _SignatureScreenState extends State<SignatureScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: Text(widget.title),
+        backgroundColor: const Color(0xFF1565C0),
+        elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context, null),
+        ),
+        title: Text(
+          widget.title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+          ),
+        ),
         actions: [
           IconButton(
             tooltip: 'Undo',
             onPressed: _onUndo,
-            icon: const Icon(Icons.undo),
+            icon: const Icon(Icons.undo_rounded, color: Colors.white),
           ),
           IconButton(
             tooltip: 'Clear',
             onPressed: _onClear,
-            icon: const Icon(Icons.delete_outline),
+            icon: const Icon(Icons.delete_sweep_rounded, color: Colors.white),
           ),
+          const SizedBox(width: 4),
         ],
       ),
       body: Column(
         children: [
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           // Signature canvas
           Expanded(
             child: Padding(
@@ -101,19 +117,18 @@ class _SignatureScreenState extends State<SignatureScreen> {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: widget.backgroundColor,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFCBD5E1), width: 1.5),
                   boxShadow: [
                     BoxShadow(
-                      blurRadius: 10,
-                      spreadRadius: 1,
-                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 16,
+                      color: Colors.black.withOpacity(0.06),
                       offset: const Offset(0, 4),
                     ),
                   ],
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(20),
                   child: Signature(
                     controller: _controller,
                     backgroundColor: widget.backgroundColor,
@@ -122,7 +137,7 @@ class _SignatureScreenState extends State<SignatureScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           // Buttons
           SafeArea(
             top: false,
@@ -133,14 +148,45 @@ class _SignatureScreenState extends State<SignatureScreen> {
                   Expanded(
                     child: OutlinedButton(
                       onPressed: () => Navigator.pop(context, null),
-                      child: const Text('Cancel'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: const BorderSide(color: Color(0xFFCBD5E1)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF475569),
+                          fontSize: 14,
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: FilledButton(
+                    child: ElevatedButton.icon(
                       onPressed: _onSave,
-                      child: const Text('Save'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2563EB),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      icon: const Icon(Icons.check_circle_rounded, size: 18),
+                      label: const Text(
+                        'Save Signature',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          color: Colors.white,
+                        ),
+                      ),
                     ),
                   ),
                 ],

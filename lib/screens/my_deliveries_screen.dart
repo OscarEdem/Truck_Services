@@ -1,13 +1,45 @@
 // lib/features/deliveries/my_deliveries_screen.dart
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../widgets/widgets.dart';
 import '../routes/navRoutes.dart';
 
-class MyDeliveriesScreen extends StatelessWidget {
+import '../services/api_service.dart';
+
+class MyDeliveriesScreen extends StatefulWidget {
   const MyDeliveriesScreen({super.key});
+
+  @override
+  State<MyDeliveriesScreen> createState() => _MyDeliveriesScreenState();
+}
+
+class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
+  List<Map<String, dynamic>> _apiDeliveries = [];
+  bool _loadingApi = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchApiDeliveries();
+  }
+
+  Future<void> _fetchApiDeliveries() async {
+    if (mounted) setState(() => _loadingApi = true);
+    try {
+      final list = await ApiService.I.listDeliveries(role: 'customer');
+      if (mounted) {
+        setState(() {
+          _apiDeliveries = list.map((item) => (item as Map).cast<String, dynamic>()).toList();
+          _loadingApi = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _loadingApi = false);
+      }
+    }
+  }
 
   Map<String, dynamic> _normalize(Map<String, dynamic> d) {
     final num? price = d['price'] as num?;
@@ -30,12 +62,9 @@ class MyDeliveriesScreen extends StatelessWidget {
       drop = '${d['drop_lat']}, ${d['drop_lng']}';
     }
 
-    // Normalize created_at to DateTime for stable sorting/rendering
     final created = d['created_at'];
     DateTime? createdAt;
-    if (created is Timestamp) {
-      createdAt = created.toDate();
-    } else if (created is DateTime) {
+    if (created is DateTime) {
       createdAt = created;
     } else if (created is String) {
       createdAt = DateTime.tryParse(created);
@@ -52,10 +81,7 @@ class MyDeliveriesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final auth = FirebaseAuth.instance;
-    final db = FirebaseFirestore.instance;
-
-    final uid = auth.currentUser?.uid;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
       return const AppScaffold(
         title: 'My Deliveries',
@@ -63,74 +89,100 @@ class MyDeliveriesScreen extends StatelessWidget {
       );
     }
 
-    // Avoid composite index: no orderBy; we sort client-side instead.
-    final q = db
-        .collection('deliveries')
-        .where('sender_id', isEqualTo: uid)
-        .snapshots();
+    if (_loadingApi) {
+      return const AppScaffold(
+        title: 'My Deliveries',
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    final mapById = <String, Map<String, dynamic>>{};
+    for (final item in _apiDeliveries) {
+      final norm = _normalize(item);
+      final id = (norm['id'] ?? norm['delivery_id'] ?? '').toString();
+      if (id.isNotEmpty) {
+        mapById[id] = norm;
+      }
+    }
+
+    final data = mapById.values.toList();
+    data.sort((a, b) {
+      final da = a['created_at_dt'] as DateTime?;
+      final db = b['created_at_dt'] as DateTime?;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
 
     return AppScaffold(
       title: 'My Deliveries',
-      body: StreamBuilder<QuerySnapshot>(
-        stream: q,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return ErrorPlaceholder(
-              message: 'Error: ${snap.error}',
-              onRetry: () {},
-            );
-          }
-
-          final docs = snap.data?.docs ?? [];
-          final data = docs.map((doc) {
-            final m = {'id': doc.id, ...(doc.data() as Map<String, dynamic>)};
-            return _normalize(m);
-          }).toList();
-
-          // Sort DESC by created_at_dt (nulls last)
-          data.sort((a, b) {
-            final da = a['created_at_dt'] as DateTime?;
-            final dbb = b['created_at_dt'] as DateTime?;
-            if (da == null && dbb == null) return 0;
-            if (da == null) return 1;
-            if (dbb == null) return -1;
-            return dbb.compareTo(da);
-          });
-
-          if (data.isEmpty) {
-            return const EmptyPlaceholder(
-              title: 'No deliveries yet',
-              message: 'Book your first delivery to see it here.',
-            );
-          }
-
-          return RefreshIndicator(
-            onRefresh: () async {},
-            child: ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              itemCount: data.length,
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-              separatorBuilder: (_, _) => const SizedBox(height: 8),
-              itemBuilder: (_, i) {
-                final d = data[i];
-                return _DeliveryCard(
-                  delivery: d,
-                  onTap: () {
-                    Navigator.pushNamed(
-                      context,
-                      NavRoutes.deliveryDetails,
-                      arguments: d,
-                    );
-                  },
-                );
-              },
+      body: data.isEmpty
+          ? RefreshIndicator(
+              onRefresh: _fetchApiDeliveries,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Container(
+                  constraints: BoxConstraints(
+                    minHeight: MediaQuery.of(context).size.height * 0.7,
+                  ),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const EmptyPlaceholder(
+                        title: 'No deliveries found',
+                        message: 'You have not placed any delivery bookings yet.',
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton.icon(
+                        onPressed: () => Navigator.pushNamed(context, NavRoutes.homePage),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2563EB),
+                          elevation: 0,
+                          shadowColor: Colors.transparent,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        ),
+                        icon: const Icon(Icons.add_rounded, color: Colors.white),
+                        label: const Text(
+                          'Book a Delivery',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: _fetchApiDeliveries,
+              child: ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
+                itemCount: data.length,
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                separatorBuilder: (_, _) => const SizedBox(height: 8),
+                itemBuilder: (_, i) {
+                  final d = data[i];
+                  return _DeliveryCard(
+                    delivery: d,
+                    onTap: () {
+                      Navigator.pushNamed(
+                        context,
+                        NavRoutes.deliveryDetails,
+                        arguments: d,
+                      );
+                    },
+                  );
+                },
+              ),
             ),
-          );
-        },
-      ),
       bottomNavigationBar: MainBottomNav(
         currentRoute: ModalRoute.of(context)?.settings.name,
       ),
@@ -179,9 +231,9 @@ class _DeliveryCard extends StatelessWidget {
     }
   }
 
+  // ---- DELIVERY CARD COMPONENT --------------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
   @override
   Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme;
     final pickup = (delivery['pickup_address'] ?? 'Unknown').toString();
     final drop = (delivery['drop_address'] ?? 'Unknown').toString();
     final priceCents = delivery['price_cents'] as int?;
@@ -193,35 +245,47 @@ class _DeliveryCard extends StatelessWidget {
     final leadingIcon = _vehicleIcon(vehicle);
     final metaIcon = _vehicleIcon(vehicle, small: true);
 
-    return Card(
-      elevation: 1,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
       child: InkWell(
+        borderRadius: BorderRadius.circular(20),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(16),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Leading tonal icon (vehicle-specific)
+              // Vehicle Icon Container
               Container(
-                width: 44,
-                height: 44,
+                width: 46,
+                height: 46,
                 decoration: BoxDecoration(
-                  color: color.secondaryContainer,
+                  color: const Color(0xFFEFF6FF),
                   shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFFDBEAFE)),
                 ),
-                child: Icon(leadingIcon, color: color.onSecondaryContainer),
+                child: Icon(leadingIcon, color: const Color(0xFF2563EB), size: 22),
               ),
               const SizedBox(width: 12),
 
-              // Middle: content
+              // Content Area
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Title line: pickup → drop
+                    // Pickup -> Dropoff route
                     Row(
                       children: [
                         Expanded(
@@ -229,53 +293,58 @@ class _DeliveryCard extends StatelessWidget {
                             pickup,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleMedium,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        Icon(
-                          Icons.arrow_forward,
-                          size: 18,
-                          color: color.outline,
+                        const SizedBox(width: 4),
+                        const Icon(
+                          Icons.arrow_forward_rounded,
+                          size: 16,
+                          color: Color(0xFF94A3B8),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 4),
                         Expanded(
                           child: Text(
                             drop,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w600),
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
 
-                    // Meta row: time • vehicle (vehicle-specific icon)
+                    // Metadata row
                     Row(
                       children: [
-                        Icon(Icons.schedule, size: 16, color: color.outline),
+                        const Icon(Icons.schedule_rounded, size: 14, color: Color(0xFF64748B)),
                         const SizedBox(width: 4),
                         Text(
                           when,
-                          style: Theme.of(context).textTheme.labelMedium
-                              ?.copyWith(color: color.outline),
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
                         ),
                         const SizedBox(width: 10),
-                        Icon(metaIcon, size: 16, color: color.outline),
+                        Icon(metaIcon, size: 14, color: const Color(0xFF64748B)),
                         const SizedBox(width: 4),
                         Text(
                           vehicle,
-                          style: Theme.of(context).textTheme.labelMedium
-                              ?.copyWith(color: color.outline),
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
                         ),
                       ],
                     ),
 
                     const SizedBox(height: 10),
 
-                    // Status chip (uses your existing widget)
+                    // Status Chip
                     Align(
                       alignment: Alignment.centerLeft,
                       child: StatusChip(status: status),
@@ -284,20 +353,22 @@ class _DeliveryCard extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
 
-              // Trailing: price + chevron
+              // Price & Arrow
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
                     _formatGhs(priceCents),
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF059669),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Icon(Icons.chevron_right, color: color.outline),
+                  const SizedBox(height: 10),
+                  const Icon(Icons.chevron_right_rounded, color: Color(0xFF94A3B8)),
                 ],
               ),
             ],

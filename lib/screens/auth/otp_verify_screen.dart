@@ -3,6 +3,7 @@
 
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 
@@ -27,6 +28,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
   late String _verificationId;
   late String _phone;
   int? _resendToken;
+  String? _role;
 
   static const int _initialResendSeconds = 30;
   int _secondsLeft = _initialResendSeconds;
@@ -42,6 +44,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
       _verificationId = args.verificationId;
       _phone = args.phone;
       _resendToken = args.resendToken;
+      _role = args.role;
       _restartTimer();
       // Autofocus first box
       Future.microtask(() => _codeNodes.first.requestFocus());
@@ -76,26 +79,57 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
   String get _code => _codeCtrls.map((c) => c.text).join();
 
   Future<void> _routeAfterAuth(User user) async {
+    String? resolvedRole;
+
+    try {
+      final me = await ApiService.I.getMe();
+      final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
+      resolvedRole = (userObj['role'] as String? ?? me['role'] as String?)?.trim().toLowerCase();
+    } catch (e) {
+      debugPrint('[OTP] ApiService getMe error: $e');
+    }
+
+    if (resolvedRole == null || resolvedRole.isEmpty) {
+      try {
+        final doc = await FirebaseFirestore.instance.collection('profiles').doc(user.uid).get();
+        if (doc.exists) {
+          resolvedRole = (doc.data()?['role'] as String?)?.trim().toLowerCase();
+        }
+      } catch (e) {
+        debugPrint('[OTP] Firestore profile read error: $e');
+      }
+    }
+
+    if (resolvedRole == null || resolvedRole.isEmpty) {
+      resolvedRole = await Prefs.I.getRoleForUser(user.uid);
+    }
+
+    final role = (resolvedRole != null && resolvedRole.isNotEmpty) ? resolvedRole : 'customer';
+
     try {
       final hasProfile = await Prefs.I.getHasProfile();
       final me = await ApiService.I.getMe();
+
       final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
-      final role = (userObj['role'] as String? ?? me['role'] as String?)?.trim().toLowerCase() ?? 'customer';
       final name = (userObj['full_name'] as String? ?? userObj['fullName'] as String? ?? me['full_name'] as String? ?? '').trim();
       final isComplete = (me['profile_complete'] as bool?) ?? (userObj['profile_complete'] as bool?) ?? hasProfile;
       final isDummyName = name.isEmpty || name.toLowerCase() == 'cargomate user' || name.toLowerCase() == 'user';
 
       if (!isComplete || isDummyName) {
         await Prefs.I.setHasProfile(false);
+        await Prefs.I.setRoleForUser(user.uid, role);
+        await Prefs.I.setRole(role);
         if (!mounted) return;
         Navigator.pushNamedAndRemoveUntil(
           context,
           NavRoutes.signUp,
           (_) => false,
+          arguments: {'role': role},
         );
         return;
       }
 
+      await Prefs.I.setRoleForUser(user.uid, role);
       await Prefs.I.setRole(role);
       await Prefs.I.setHasProfile(true);
 
@@ -119,10 +153,12 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
     } catch (_) {
       if (!mounted) return;
       await Prefs.I.setHasProfile(false);
+      // Preserve role even on error — don't lose driver role
       Navigator.pushNamedAndRemoveUntil(
         context,
         NavRoutes.signUp,
         (_) => false,
+        arguments: {'role': role},
       );
     }
   }
@@ -150,13 +186,17 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
       // Exchange Firebase ID Token for CargoMate Go Backend System Token
       final idToken = await user.getIdToken() ?? '';
       try {
+        // Only pass roleToSend if explicitly passed in OtpArgs (from SignUpScreen)
+        final roleToSend = _role;
+
         final loginResponse = await ApiService.I.firebaseLogin(
           firebaseToken: idToken,
           phone: _phone,
+          role: roleToSend,
         );
         
         final userObj = loginResponse['user'] as Map<String, dynamic>?;
-        final role = (userObj?['role'] as String?) ?? 'customer';
+        final role = (userObj?['role'] as String?) ?? roleToSend ?? 'customer';
         final isComplete = (loginResponse['profile_complete'] as bool?) ?? false;
 
         await Prefs.I.setRole(role);

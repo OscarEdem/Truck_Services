@@ -17,8 +17,8 @@ class SignInScreen extends StatefulWidget {
 
 /// Lightweight country model
 class _Country {
-  final String name, iso2, dialCode, flag;
-  const _Country(this.name, this.iso2, this.dialCode, [this.flag = '']);
+  final String name, iso2, dialCode;
+  const _Country(this.name, this.iso2, this.dialCode);
 }
 
 class _SignInScreenState extends State<SignInScreen> {
@@ -43,17 +43,22 @@ class _SignInScreenState extends State<SignInScreen> {
     super.dispose();
   }
 
-  // ------ Helpers ------
-  /// Enforce EXACTLY 9 digits for the local number
+  /// Enforce EXACTLY 9 digits for the local number (after country code)
   String? _validateLocalNumber(String? v) {
-    final s = (v ?? '').replaceAll(RegExp(r'\s+'), '');
+    var s = (v ?? '').replaceAll(RegExp(r'[^0-9]'), '');
     if (s.isEmpty) return 'Enter your phone number';
-    if (!RegExp(r'^[0-9]{9}$').hasMatch(s)) return 'Enter exactly 9 digits';
+    if (s.startsWith('0')) {
+      s = s.substring(1);
+    }
+    if (s.length != 9) return 'Enter 9 digits after country code';
     return null;
   }
 
   String get _fullE164 {
-    final local = _numberCtl.text.replaceAll(RegExp(r'[^0-9]'), '');
+    var local = _numberCtl.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (local.startsWith('0')) {
+      local = local.substring(1);
+    }
     return '+${_country.dialCode}$local';
   }
 
@@ -244,12 +249,10 @@ class _SignInScreenState extends State<SignInScreen> {
                           keyboardType: TextInputType.phone,
                           inputFormatters: [
                             FilteringTextInputFormatter.digitsOnly,
-                            LengthLimitingTextInputFormatter(
-                              9,
-                            ), // ✅ exactly 9 digits
+                            LengthLimitingTextInputFormatter(10),
                           ],
                           decoration: InputDecoration(
-                            hintText: '24XXXXXXX', // 9 digits
+                            hintText: '24XXXXXXX',
                             filled: true,
                             fillColor: const Color(0xFFF0F4FF),
                             suffixIcon: _numberCtl.text.isNotEmpty

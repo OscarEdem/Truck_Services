@@ -4,13 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 
-// 🔁 Firebase
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 
 import '../../../widgets/widgets.dart';
 import '../../../routes/navRoutes.dart';
+import '../../services/api_service.dart';
+import '../../services/prefs.dart';
 
 class DriverHomePage extends StatefulWidget {
   const DriverHomePage({super.key});
@@ -21,10 +20,7 @@ class DriverHomePage extends StatefulWidget {
 
 class _DriverHomePageState extends State<DriverHomePage>
     with WidgetsBindingObserver {
-  // Firebase handles
   final _auth = FirebaseAuth.instance;
-  final _db = FirebaseFirestore.instance;
-  final _storage = FirebaseStorage.instance;
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   bool _online = false;
@@ -32,58 +28,104 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   StreamSubscription<Position>? _posSub;
 
-  // Available jobs (realtime query)
+  // Available jobs
   List<Map<String, dynamic>> _available = [];
   bool _loadingAvailable = true;
-  StreamSubscription<QuerySnapshot>? _availableSub;
 
-  // My active jobs (realtime query)
+  // My active jobs
   List<Map<String, dynamic>> _myJobs = [];
   bool _loadingMy = true;
-  StreamSubscription<QuerySnapshot>? _myJobsSub;
 
-  // Completed jobs (delivered)
+  // Completed jobs
   List<Map<String, dynamic>> _completed = [];
   bool _loadingCompleted = true;
-  StreamSubscription<QuerySnapshot>? _completedSub;
 
-  // Consider these "active" (i.e., not delivered yet)
-  static const List<String> _activeStatuses = [
-    'pending',
-    'accepted',
-    'picked_up',
-    'enroute',
-  ];
+  bool _isVerified = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _listenAvailable();
-    _listenMyJobs();
-    _listenCompleted();
+    _checkVerificationStatus();
+    _restoreOnlineState();
+    _loadAvailable();
+    _loadMyJobs();
+    _loadCompleted();
+  }
+
+  Future<void> _restoreOnlineState() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    bool isOnline = await Prefs.I.getOnlineForUser(user.uid);
+
+    try {
+      final me = await ApiService.I.getMe();
+      final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
+      if (userObj.containsKey('is_online')) {
+        isOnline = userObj['is_online'] == true;
+      }
+    } catch (_) {}
+
+    if (mounted && isOnline) {
+      setState(() => _online = true);
+      await _startLocationTracking(user.uid);
+    }
+  }
+
+  Future<void> _startLocationTracking(String uid) async {
+    final granted = await _ensureLocationPermission();
+    if (!granted) return;
+
+    // Connect WebSocket stream for real-time customer map tracking
+    ApiService.I.startLocationWebSocket(uid);
+
+    await _posSub?.cancel();
+    _posSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 3,
+      ),
+    ).listen((pos) async {
+      try {
+        await ApiService.I.updateDriverGPS(
+          latitude: pos.latitude,
+          longitude: pos.longitude,
+          heading: pos.heading,
+          speed: pos.speed,
+        );
+      } catch (_) {}
+    });
+  }
+
+  Future<void> _checkVerificationStatus() async {
+    try {
+      final me = await ApiService.I.getMe();
+      final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
+      final verified = (userObj['is_verified'] == true) ||
+          (userObj['isVerified'] == true) ||
+          (me['is_verified'] == true) ||
+          (me['isVerified'] == true);
+      if (mounted) {
+        setState(() => _isVerified = verified);
+      }
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _posSub?.cancel();
-    _availableSub?.cancel();
-    _myJobsSub?.cancel();
-    _completedSub?.cancel();
+    ApiService.I.stopLocationWebSocket();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // On resume, re-listen to queries (defensive)
     if (state == AppLifecycleState.resumed) {
-      _availableSub?.cancel();
-      _myJobsSub?.cancel();
-      _completedSub?.cancel();
-      _listenAvailable();
-      _listenMyJobs();
-      _listenCompleted();
+      _loadAvailable();
+      _loadMyJobs();
+      _loadCompleted();
     }
     super.didChangeAppLifecycleState(state);
   }
@@ -97,37 +139,30 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
+    setState(() => _online = value);
+    await Prefs.I.setOnlineForUser(user.uid, value);
+
+    try {
+      await ApiService.I.updateMe({'is_online': value});
+    } catch (e) {
+      debugPrint('[DRIVER_HOME] Update online status error: $e');
+    }
+
     if (value) {
       final granted = await _ensureLocationPermission();
       if (!granted) {
         AppSnack.show(context, 'Location permission required');
+        setState(() => _online = false);
+        await Prefs.I.setOnlineForUser(user.uid, false);
         return;
       }
-      setState(() => _online = true);
-
-      _posSub?.cancel();
-      _posSub =
-          Geolocator.getPositionStream(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high,
-              distanceFilter: 5,
-            ),
-          ).listen((pos) async {
-            try {
-              await _db.collection('driver_locations').doc(user.uid).set({
-                'driver_id': user.uid,
-                'lat': pos.latitude,
-                'lng': pos.longitude,
-                'updated_at': FieldValue.serverTimestamp(),
-              }, SetOptions(merge: true));
-            } catch (_) {
-              // ignore transient errors
-            }
-          });
+      await _startLocationTracking(user.uid);
+      if (mounted) AppSnack.show(context, 'You are now ONLINE & active');
     } else {
       await _posSub?.cancel();
       _posSub = null;
-      setState(() => _online = false);
+      ApiService.I.stopLocationWebSocket();
+      if (mounted) AppSnack.show(context, 'You are now OFFLINE');
     }
   }
 
@@ -142,237 +177,216 @@ class _DriverHomePageState extends State<DriverHomePage>
         perm == LocationPermission.whileInUse;
   }
 
-  // ===== Data: realtime listeners =====
+  // ===== Data: Pure REST API Gateway Callers =====
 
-  void _listenAvailable() {
-    setState(() => _loadingAvailable = true);
+  Future<void> _loadAvailable() async {
+    if (mounted) setState(() => _loadingAvailable = true);
+    try {
+      final list = await ApiService.I.listDeliveries(role: 'driver', filterStatus: 'pending');
+      final rows = list
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .where((d) {
+            final driverId = (d['driver_id'] ?? d['driverId'])?.toString();
+            final status = (d['status'] as String?) ?? 'pending';
+            final unassigned = driverId == null || driverId.isEmpty;
+            return status == 'pending' && unassigned;
+          })
+          .toList();
 
-    // Deliveries that are pending and unassigned:
-    _availableSub = _db
-        .collection('deliveries')
-        .where('status', isEqualTo: 'pending')
-        .orderBy('created_at', descending: true)
-        .limit(100)
-        .snapshots()
-        .listen(
-          (snap) {
-            final rows = <Map<String, dynamic>>[];
-            for (final d in snap.docs) {
-              final data = d.data();
-              final driverId = data['driver_id'];
-              if (driverId == null ||
-                  (driverId is String && driverId.isEmpty)) {
-                rows.add({'id': d.id, ...data});
-              }
-            }
-            if (!mounted) return;
-            setState(() {
-              _available = rows;
-              _loadingAvailable = false;
-            });
-          },
-          onError: (e) {
-            if (!mounted) return;
-            setState(() => _loadingAvailable = false);
-            AppSnack.show(context, 'Error loading jobs: $e');
-          },
-        );
+      rows.sort((a, b) {
+        final ca = (a['created_at'] ?? a['createdAt'])?.toString() ?? '';
+        final cb = (b['created_at'] ?? b['createdAt'])?.toString() ?? '';
+        return cb.compareTo(ca);
+      });
+
+      if (mounted) {
+        setState(() {
+          _available = rows;
+          _loadingAvailable = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[DRIVER_HOME] _loadAvailable error: $e');
+      if (mounted) setState(() => _loadingAvailable = false);
+    }
   }
 
-  void _listenMyJobs() {
-    setState(() => _loadingMy = true);
-    final uid = _auth.currentUser?.uid;
-
-    if (uid == null) {
-      setState(() {
-        _myJobs = [];
-        _loadingMy = false;
-      });
+  Future<void> _loadMyJobs() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      if (mounted) setState(() { _myJobs = []; _loadingMy = false; });
       return;
     }
 
-    _myJobsSub = _db
-        .collection('deliveries')
-        .where('driver_id', isEqualTo: uid)
-        .where('status', whereIn: _activeStatuses)
-        .orderBy('created_at', descending: true)
-        .snapshots()
-        .listen(
-          (snap) {
-            final rows = snap.docs
-                .map((d) => {'id': d.id, ...d.data()})
-                .toList();
-            if (!mounted) return;
-            setState(() {
-              _myJobs = rows;
-              _loadingMy = false;
-            });
-          },
-          onError: (e) {
-            if (!mounted) return;
-            setState(() => _loadingMy = false);
-            AppSnack.show(context, 'Error loading my jobs: $e');
-          },
-        );
+    if (mounted) setState(() => _loadingMy = true);
+    try {
+      final firebaseUid = user.uid;
+      String dbUserId = '';
+      try {
+        final me = await ApiService.I.getMe();
+        final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
+        dbUserId = (userObj['id'] ?? userObj['user_id'] ?? userObj['uid'] ?? '').toString();
+      } catch (_) {}
+
+      final list = await ApiService.I.listDeliveries(role: 'driver', filterStatus: 'active');
+      final rows = list
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .where((d) {
+            final driverId = (d['driver_id'] ?? d['driverId'] ?? d['driver_user_id'])?.toString();
+            final status = ((d['status'] as String?) ?? '').toLowerCase();
+            final isMine = (driverId == null || driverId.isEmpty || driverId == '0') ||
+                (driverId == firebaseUid) ||
+                (dbUserId.isNotEmpty && driverId == dbUserId);
+            final isActive = (status == 'accepted' || status == 'picked_up' || status == 'enroute' || status == 'in_transit' || status == 'active');
+            return isMine && isActive;
+          })
+          .toList();
+
+      rows.sort((a, b) {
+        final ca = (a['created_at'] ?? a['createdAt'])?.toString() ?? '';
+        final cb = (b['created_at'] ?? b['createdAt'])?.toString() ?? '';
+        return cb.compareTo(ca);
+      });
+
+      if (mounted) {
+        setState(() {
+          _myJobs = rows;
+          _loadingMy = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[DRIVER_HOME] _loadMyJobs error: $e');
+      if (mounted) setState(() => _loadingMy = false);
+    }
   }
 
-  void _listenCompleted() {
-    setState(() => _loadingCompleted = true);
-    final uid = _auth.currentUser?.uid;
-
-    if (uid == null) {
-      setState(() {
-        _completed = [];
-        _loadingCompleted = false;
-      });
+  Future<void> _loadCompleted() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      if (mounted) setState(() { _completed = []; _loadingCompleted = false; });
       return;
     }
 
-    // Delivered jobs for me. If you get an index error in Firestore console,
-    // create the suggested composite index for (driver_id, status, delivered_at).
-    _completedSub = _db
-        .collection('deliveries')
-        .where('driver_id', isEqualTo: uid)
-        .where('status', isEqualTo: 'delivered')
-        .orderBy('delivered_at', descending: true)
-        .limit(100)
-        .snapshots()
-        .listen(
-          (snap) {
-            final rows = snap.docs
-                .map((d) => {'id': d.id, ...d.data()})
-                .toList();
-            if (!mounted) return;
-            setState(() {
-              _completed = rows;
-              _loadingCompleted = false;
-            });
-          },
-          onError: (e) {
-            if (!mounted) return;
-            setState(() => _loadingCompleted = false);
-            AppSnack.show(context, 'Error loading completed: $e');
-          },
-        );
+    if (mounted) setState(() => _loadingCompleted = true);
+    try {
+      final firebaseUid = user.uid;
+      String dbUserId = '';
+      try {
+        final me = await ApiService.I.getMe();
+        final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
+        dbUserId = (userObj['id'] ?? userObj['user_id'] ?? userObj['uid'] ?? '').toString();
+      } catch (_) {}
+
+      final list = await ApiService.I.listDeliveries(role: 'driver', filterStatus: 'completed');
+      final rows = list
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .where((d) {
+            final driverId = (d['driver_id'] ?? d['driverId'] ?? d['driver_user_id'])?.toString();
+            final status = ((d['status'] as String?) ?? '').toLowerCase();
+            final isMine = (driverId == null || driverId.isEmpty || driverId == '0') ||
+                (driverId == firebaseUid) ||
+                (dbUserId.isNotEmpty && driverId == dbUserId);
+            final isDelivered = (status == 'delivered' || status == 'completed');
+            return isMine && isDelivered;
+          })
+          .toList();
+
+      rows.sort((a, b) {
+        final ca = (a['delivered_at'] ?? a['created_at'])?.toString() ?? '';
+        final cb = (b['delivered_at'] ?? b['created_at'])?.toString() ?? '';
+        return cb.compareTo(ca);
+      });
+
+      if (mounted) {
+        setState(() {
+          _completed = rows;
+          _loadingCompleted = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[DRIVER_HOME] _loadCompleted error: $e');
+      if (mounted) setState(() => _loadingCompleted = false);
+    }
   }
 
-  Future<void> _refreshAvailable() async {
-    _availableSub?.cancel();
-    _listenAvailable();
-  }
+  Future<void> _refreshAvailable() async => _loadAvailable();
+  Future<void> _refreshMyJobs() async => _loadMyJobs();
+  Future<void> _refreshCompleted() async => _loadCompleted();
 
-  Future<void> _refreshMyJobs() async {
-    _myJobsSub?.cancel();
-    _listenMyJobs();
-  }
-
-  Future<void> _refreshCompleted() async {
-    _completedSub?.cancel();
-    _listenCompleted();
-  }
-
-  // ===== Actions: accept / picked_up / deliver + POD (race-safe via transactions) =====
+  // ===== Actions: accept / picked_up / deliver via Go REST API Gateway =====
 
   Future<void> _acceptJob(Map<String, dynamic> row) async {
     final user = _auth.currentUser;
     if (user == null) return;
 
+    final id = (row['id'] ?? row['delivery_id'])?.toString();
+    if (id == null || id.isEmpty) {
+      AppSnack.show(context, 'Invalid delivery order ID');
+      return;
+    }
+
     setState(() => _busy = true);
     try {
-      final docRef = _db.collection('deliveries').doc(row['id'].toString());
+      final res = await ApiService.I.acceptJob(id);
+      if (!mounted) return;
+      AppSnack.show(context, 'Job accepted!');
+      final acceptedData = Map<String, dynamic>.from(row)..addAll(res);
+      acceptedData['driver_id'] = user.uid;
+      acceptedData['status'] = 'accepted';
 
-      final result = await _db.runTransaction((tx) async {
-        final snap = await tx.get(docRef);
-        if (!snap.exists) return false;
-
-        final data = snap.data() as Map<String, dynamic>;
-        final status = (data['status'] as String?) ?? 'pending';
-        final currentDriver = data['driver_id'];
-
-        final unassigned =
-            currentDriver == null ||
-            (currentDriver is String && currentDriver.isEmpty);
-
-        if (status == 'pending' && unassigned) {
-          tx.update(docRef, {
-            'driver_id': user.uid,
-            'status': 'accepted',
-            'accepted_at': FieldValue.serverTimestamp(),
-          });
-          return true;
-        }
-        return false;
+      setState(() {
+        _available.removeWhere((item) => (item['id'] ?? item['delivery_id'])?.toString() == id);
+        _myJobs.removeWhere((item) => (item['id'] ?? item['delivery_id'])?.toString() == id);
+        _myJobs.insert(0, acceptedData);
       });
 
-      if (!mounted) return;
-
-      if (result == true) {
-        AppSnack.show(context, 'Job accepted');
-        final withDriver = {
-          ...row,
-          'driver_id': user.uid,
-          'status': 'accepted',
-        };
-        Navigator.pushNamed(
-          context,
-          NavRoutes.deliveryDetails,
-          arguments: withDriver,
-        );
-      } else {
-        AppSnack.show(context, 'Someone else already accepted this job');
-        await _refreshAvailable();
-      }
+      Navigator.pushNamed(
+        context,
+        NavRoutes.deliveryDetails,
+        arguments: acceptedData,
+      );
+      _loadAvailable();
+      _loadMyJobs();
     } catch (e) {
-      if (mounted) AppSnack.show(context, 'Error: $e');
+      if (mounted) AppSnack.show(context, 'Could not accept job: $e');
+      await _loadAvailable();
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _markPickedUp(Map<String, dynamic> row) async {
-    final user = _auth.currentUser;
-    if (user == null) return;
+    final id = (row['id'] ?? row['delivery_id'])?.toString();
+    if (id == null || id.isEmpty) return;
 
     setState(() => _busy = true);
     try {
-      final docRef = _db.collection('deliveries').doc(row['id'].toString());
-      final ok = await _db.runTransaction((tx) async {
-        final snap = await tx.get(docRef);
-        if (!snap.exists) return false;
-
-        final data = snap.data() as Map<String, dynamic>;
-        final status = (data['status'] as String?) ?? 'pending';
-        final driverId = data['driver_id'];
-
-        if (driverId == user.uid && status == 'accepted') {
-          tx.update(docRef, {
-            'status': 'picked_up',
-            'picked_up_at': FieldValue.serverTimestamp(),
-          });
-          return true;
-        }
-        return false;
-      });
-
+      await ApiService.I.updateDeliveryStatus(deliveryId: id, status: 'enroute');
       if (!mounted) return;
+      AppSnack.show(context, 'Package picked up! Launching Google Maps navigation...');
 
-      if (ok) {
-        AppSnack.show(context, 'Package picked up');
-        await _refreshMyJobs();
-      } else {
-        AppSnack.show(context, 'Cannot mark picked up (check status)');
-        await _refreshMyJobs();
+      final dropLat = double.tryParse((row['drop_lat'] ?? row['drop_latitude'] ?? row['dropLat'] ?? '').toString());
+      final dropLng = double.tryParse((row['drop_lng'] ?? row['drop_longitude'] ?? row['dropLng'] ?? '').toString());
+      final dropAddr = (row['drop_address'] ?? row['dropAddress'] ?? row['dropoff_address'] ?? 'Destination').toString();
+
+      if (dropLat != null && dropLng != null && dropLat != 0.0 && dropLng != 0.0) {
+        await ApiService.I.launchGoogleMapsNavigation(
+          destinationLat: dropLat,
+          destinationLng: dropLng,
+          destinationName: dropAddr,
+        );
       }
+      _loadMyJobs();
     } catch (e) {
-      if (mounted) AppSnack.show(context, 'Error: $e');
+      if (mounted) AppSnack.show(context, 'Status update error: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _deliverWithPod(Map<String, dynamic> row) async {
-    final user = _auth.currentUser;
-    if (user == null) return;
+    final id = (row['id'] ?? row['delivery_id'])?.toString();
+    if (id == null || id.isEmpty) return;
 
     final picker = ImagePicker();
     final shot = await picker.pickImage(
@@ -384,48 +398,19 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     setState(() => _busy = true);
     try {
-      // 1) Upload proof to Storage
       final bytes = await shot.readAsBytes();
-      final storagePath =
-          'pod/${row['id']}/${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final task = await _storage
-          .ref(storagePath)
-          .putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
-      final podUrl = await task.ref.getDownloadURL();
-
-      // 2) Race-safe delivered state
-      final docRef = _db.collection('deliveries').doc(row['id'].toString());
-      final ok = await _db.runTransaction((tx) async {
-        final snap = await tx.get(docRef);
-        if (!snap.exists) return false;
-
-        final data = snap.data() as Map<String, dynamic>;
-        final status = (data['status'] as String?) ?? 'pending';
-        final driverId = data['driver_id'];
-
-        if (driverId == user.uid && status == 'picked_up') {
-          tx.update(docRef, {
-            'status': 'delivered',
-            'pod_path': storagePath,
-            'pod_url': podUrl,
-            'delivered_at': FieldValue.serverTimestamp(),
-          });
-          return true;
-        }
-        return false;
-      });
-
+      final podUrl = await ApiService.I.uploadAssetFile(bytes, shot.name, 'vehicle');
+      await ApiService.I.updateDeliveryStatus(
+        deliveryId: id,
+        status: 'delivered',
+        podProofURL: podUrl,
+      );
       if (!mounted) return;
-
-      if (ok) {
-        AppSnack.show(context, 'Delivered with proof uploaded');
-        await _refreshMyJobs();
-        await _refreshCompleted();
-      } else {
-        AppSnack.show(context, 'Cannot mark delivered (check status)');
-      }
+      AppSnack.show(context, 'Job completed & delivered successfully!');
+      _loadMyJobs();
+      _loadCompleted();
     } catch (e) {
-      if (mounted) AppSnack.show(context, 'Error delivering: $e');
+      if (mounted) AppSnack.show(context, 'Delivery completion error: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -438,14 +423,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: Colors.white,
+      // ---- DRIVER HOME SCREEN ---------------------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
       appBar: AppBar(
-        automaticallyImplyLeading: false, // no back button
+        automaticallyImplyLeading: false,
         backgroundColor: const Color(0xFF1565C0),
         elevation: 0,
-        titleSpacing: 0,
+        titleSpacing: 16,
         title: Row(
           children: [
-            const SizedBox(width: 15),
             Image.asset(
               'assets/icons/cargomatewhitelogo.png',
               height: 26,
@@ -463,6 +448,14 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Menu',
+            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+            icon: const Icon(Icons.menu_rounded, color: Colors.white),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       endDrawer: const DriverDrawer(),
 
@@ -472,21 +465,45 @@ class _DriverHomePageState extends State<DriverHomePage>
           length: 3,
           child: Column(
             children: [
+              if (!_isVerified)
+                Container(
+                  width: double.infinity,
+                  color: const Color(0xFFFFFBEB),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.hourglass_top_rounded, color: Color(0xFFD97706), size: 18),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Account Verification Pending — Your driver credentials and selfie are currently under review by our team.',
+                          style: TextStyle(
+                            color: Color(0xFF92400E),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // ---- HERO ONLINE / OFFLINE TOGGLE BANNER ------------------------------------------------------------                                                                                                                                                                                #*eddiere
               Container(
-                margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                margin: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: _online
-                        ? [const Color(0xFF1B5E20), const Color(0xFF2E7D32)]
-                        : [const Color(0xFF37474F), const Color(0xFF455A64)],
+                        ? [const Color(0xFF065F46), const Color(0xFF059669)]
+                        : [const Color(0xFF1E293B), const Color(0xFF334155)],
                   ),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: (_online ? Colors.green : Colors.black).withOpacity(0.25),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
+                      color: (_online ? const Color(0xFF059669) : Colors.black).withOpacity(0.25),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),
@@ -494,38 +511,41 @@ class _DriverHomePageState extends State<DriverHomePage>
                   children: [
                     AnimatedContainer(
                       duration: const Duration(milliseconds: 300),
-                      width: 12,
-                      height: 12,
+                      width: 14,
+                      height: 14,
                       decoration: BoxDecoration(
-                        color: _online ? const Color(0xFF00E676) : Colors.grey.shade400,
+                        color: _online ? const Color(0xFF34D399) : const Color(0xFF94A3B8),
                         shape: BoxShape.circle,
                         boxShadow: _online
                             ? [
                                 BoxShadow(
-                                  color: const Color(0xFF00E676).withOpacity(0.8),
-                                  blurRadius: 8,
+                                  color: const Color(0xFF34D399).withOpacity(0.8),
+                                  blurRadius: 10,
                                   spreadRadius: 2,
                                 )
                               ]
                             : [],
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 14),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _online ? 'ONLINE & READY' : 'OFFLINE',
+                            _online ? 'ONLINE & ACTIVE' : 'OFFLINE MODE',
                             style: const TextStyle(
                               color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                              fontWeight: FontWeight.w800,
                               fontSize: 14,
                               letterSpacing: 0.5,
                             ),
                           ),
+                          const SizedBox(height: 2),
                           Text(
-                            _online ? 'Receiving real-time freight requests' : 'Toggle switch to start accepting trips',
+                            _online
+                                ? 'Receiving live freight & delivery requests'
+                                : 'Toggle switch to start receiving delivery jobs',
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.85),
                               fontSize: 11,
@@ -537,20 +557,51 @@ class _DriverHomePageState extends State<DriverHomePage>
                     Switch.adaptive(
                       value: _online,
                       onChanged: _toggleOnline,
-                      activeColor: const Color(0xFF00E676),
-                      activeTrackColor: Colors.white.withOpacity(0.3),
+                      activeColor: const Color(0xFF34D399),
+                      activeTrackColor: Colors.white.withOpacity(0.25),
                     ),
                   ],
                 ),
               ),
-              const Divider(),
-              const TabBar(
-                tabs: [
-                  Tab(text: 'Available'),
-                  Tab(text: 'My Jobs'),
-                  Tab(text: 'Completed'),
-                ],
+              const SizedBox(height: 4),
+
+              // ---- STYLED TAB BAR ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Container(
+                  height: 44,
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: TabBar(
+                    indicator: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.06),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    labelColor: const Color(0xFF0F172A),
+                    unselectedLabelColor: const Color(0xFF64748B),
+                    labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    dividerColor: Colors.transparent,
+                    tabs: const [
+                      Tab(text: 'Available'),
+                      Tab(text: 'My Jobs'),
+                      Tab(text: 'Completed'),
+                    ],
+                  ),
+                ),
               ),
+              const SizedBox(height: 8),
               Expanded(
                 child: TabBarView(
                   children: [
@@ -577,6 +628,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                               itemBuilder: (_, i) => JobCard.available(
                                 d: _available[i],
                                 onAccept: () => _acceptJob(_available[i]),
+                                onOpenDetails: () {
+                                  Navigator.pushNamed(
+                                    context,
+                                    NavRoutes.deliveryDetails,
+                                    arguments: _available[i],
+                                  );
+                                },
                               ),
                             ),
                           ),
@@ -656,6 +714,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         ),
       ),
+      bottomNavigationBar: const MainBottomNav(currentRoute: NavRoutes.driverHome),
     );
   }
 
@@ -689,6 +748,7 @@ class JobCard extends StatelessWidget {
   final VoidCallback? onDeliver;
   final VoidCallback? onOpenDetails;
   final VoidCallback? onOpenPod;
+  // ignore: library_private_types_in_public_api
   final _Kind kind;
 
   const JobCard._({
@@ -704,7 +764,13 @@ class JobCard extends StatelessWidget {
   factory JobCard.available({
     required Map<String, dynamic> d,
     required VoidCallback onAccept,
-  }) => JobCard._(d: d, kind: _Kind.available, onAccept: onAccept);
+    required VoidCallback onOpenDetails,
+  }) => JobCard._(
+    d: d,
+    kind: _Kind.available,
+    onAccept: onAccept,
+    onOpenDetails: onOpenDetails,
+  );
 
   factory JobCard.active({
     required Map<String, dynamic> d,
@@ -731,59 +797,90 @@ class JobCard extends StatelessWidget {
   );
 
   String get _priceText {
-    final p = d['price'];
-    if (p is num) return p.toStringAsFixed(0);
-    if (p is String) return p;
+    final p = d['price'] ?? d['price_cents'] ?? d['amount'] ?? d['fare'] ?? d['estimated_price'] ?? d['cost'] ?? d['total_price'];
+    if (p is num) {
+      if (d['price'] == null && d['price_cents'] != null) {
+        return (p / 100).toStringAsFixed(2);
+      }
+      return p.toStringAsFixed(0);
+    }
+    if (p is String && p.trim().isNotEmpty) return p.trim();
     return '--';
-    // (If you also store price_cents, you can add the same logic you used elsewhere.)
   }
 
-  String get _vehicle => (d['vehicle_type'] ?? '').toString();
+  String get _vehicle => (d['vehicle_type'] ?? d['vehicleType'] ?? '').toString();
 
-  String _addr(dynamic lat, dynamic lng) {
-    return '${lat ?? '--'}, ${lng ?? '--'}';
+  String _getAddr(dynamic addr, dynamic lat, dynamic lng) {
+    if (addr != null && addr.toString().trim().isNotEmpty && addr.toString().trim() != '0, 0' && addr.toString().trim() != '0') {
+      return addr.toString().trim();
+    }
+    if (lat != null && lng != null && lat.toString() != '0' && lng.toString() != '0' && lat.toString() != '0.0') {
+      return '$lat, $lng';
+    }
+    return 'Location not specified';
   }
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     final status = (d['status'] as String?) ?? '';
     final isCompleted = status == 'delivered';
 
     final podUrl = (d['pod_url'] as String?) ?? '';
     final hasThumb = isCompleted && podUrl.isNotEmpty;
 
-    return Card(
-      elevation: 1.5,
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
+    final pickupAddrText = _getAddr(
+      d['pickup_address'] ?? d['pickupAddress'] ?? d['pickup_location'] ?? d['pickup'],
+      d['pickup_lat'] ?? d['pickup_latitude'] ?? d['pickupLat'],
+      d['pickup_lng'] ?? d['pickup_longitude'] ?? d['pickupLng'],
+    );
+    final dropAddrText = _getAddr(
+      d['drop_address'] ?? d['dropAddress'] ?? d['dropoff_address'] ?? d['dropoffAddress'] ?? d['drop_location'] ?? d['drop'],
+      d['drop_lat'] ?? d['drop_latitude'] ?? d['dropLat'],
+      d['drop_lng'] ?? d['drop_longitude'] ?? d['dropLng'],
+    );
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
       child: InkWell(
+        borderRadius: BorderRadius.circular(20),
         onTap: kind == _Kind.completed
             ? (onOpenPod ?? onOpenDetails)
             : onOpenDetails,
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Left: optional thumbnail for completed (POD) / generic icon otherwise
+              // Left: POD thumbnail or category icon
               ClipRRect(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
                 child: SizedBox(
                   height: 64,
                   width: 64,
                   child: hasThumb
                       ? Image.network(podUrl, fit: BoxFit.cover)
                       : Container(
-                          color: cs.surfaceContainerHighest,
+                          color: const Color(0xFFF1F5F9),
                           child: Icon(
                             kind == _Kind.available
                                 ? Icons.local_offer_outlined
                                 : (kind == _Kind.active
-                                      ? Icons.directions_bike_outlined
-                                      : Icons.check_circle_outline),
-                            color: cs.onSurfaceVariant,
+                                      ? Icons.local_shipping_outlined
+                                      : Icons.check_circle_outline_rounded),
+                            color: const Color(0xFF059669),
+                            size: 28,
                           ),
                         ),
                 ),
@@ -796,21 +893,22 @@ class JobCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Top row: price + vehicle chip + status chip
-                    Row(
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(
                           '₵$_priceText',
                           style: const TextStyle(
                             fontWeight: FontWeight.w800,
-                            fontSize: 16,
+                            fontSize: 15,
                           ),
                         ),
-                        const SizedBox(width: 8),
                         _LabeledChip(
                           icon: Icons.local_shipping_outlined,
                           label: _vehicle.isEmpty ? 'vehicle' : _vehicle,
                         ),
-                        const Spacer(),
                         _StatusPill(status: status),
                       ],
                     ),
@@ -824,7 +922,7 @@ class JobCard extends StatelessWidget {
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
-                            'From: ${_addr(d['pickup_lat'], d['pickup_lng'])}',
+                            'From: $pickupAddrText',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -839,7 +937,7 @@ class JobCard extends StatelessWidget {
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
-                            'To:   ${_addr(d['drop_lat'], d['drop_lng'])}',
+                            'To:   $dropAddrText',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -864,17 +962,33 @@ class JobCard extends StatelessWidget {
               const SizedBox(width: 8),
               Column(
                 children: [
-                  if (kind == _Kind.available && onAccept != null)
-                    FilledButton(
-                      onPressed: onAccept,
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(84, 36),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                  if (kind == _Kind.available) ...[
+                    if (onAccept != null)
+                      FilledButton(
+                        onPressed: onAccept,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF059669),
+                          minimumSize: const Size(84, 36),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
+                        child: const Text('Accept'),
                       ),
-                      child: const Text('Accept'),
-                    ),
+                    const SizedBox(height: 6),
+                    if (onOpenDetails != null)
+                      OutlinedButton(
+                        onPressed: onOpenDetails,
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(84, 32),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: const Text('Details', style: TextStyle(fontSize: 12)),
+                      ),
+                  ],
                   if (kind == _Kind.active) ...[
                     if ((d['status'] as String?) == 'accepted' &&
                         onPickedUp != null)
@@ -937,7 +1051,6 @@ class JobCard extends StatelessWidget {
   static String _fmtTimestamp(dynamic ts) {
     if (ts == null) return '—';
     DateTime? dt;
-    if (ts is Timestamp) dt = ts.toDate();
     if (ts is DateTime) dt = ts;
     if (ts is String) dt = DateTime.tryParse(ts);
     if (dt == null) return '—';

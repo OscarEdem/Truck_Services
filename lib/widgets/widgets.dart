@@ -5,6 +5,7 @@ import '../services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../routes/navRoutes.dart';
@@ -24,11 +25,29 @@ class Gap extends StatelessWidget {
 class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
   final List<Widget>? actions;
-  const CustomAppBar({super.key, required this.title, this.actions});
+  final Widget? leading;
+  const CustomAppBar({super.key, required this.title, this.actions, this.leading});
 
   @override
   Widget build(BuildContext context) {
-    return AppBar(title: Text(title), centerTitle: true, actions: actions);
+    return AppBar(
+      title: Text(
+        title,
+        style: const TextStyle(
+          fontWeight: FontWeight.w800,
+          fontSize: 18,
+          color: Colors.white,
+        ),
+      ),
+      centerTitle: true,
+      backgroundColor: const Color(0xFF1565C0),
+      elevation: 0,
+      surfaceTintColor: Colors.transparent,
+      iconTheme: const IconThemeData(color: Colors.white),
+      actionsIconTheme: const IconThemeData(color: Colors.white),
+      actions: actions,
+      leading: leading,
+    );
   }
 
   @override
@@ -129,32 +148,32 @@ class StatusChip extends StatelessWidget {
 
   Color _bg() {
     final s = status.toLowerCase();
-    if (s.contains('done') || s.contains('delivered')) {
-      return Colors.green.withOpacity(.15);
+    if (s.contains('done') || s.contains('delivered') || s.contains('complete')) {
+      return const Color(0xFFF0FDF4);
     }
-    if (s.contains('route') || s.contains('enroute')) {
-      return Colors.blue.withOpacity(.15);
+    if (s.contains('route') || s.contains('enroute') || s.contains('transit') || s.contains('active')) {
+      return const Color(0xFFEFF6FF);
     }
-    if (s.contains('accept') || s.contains('assigned')) {
-      return Colors.orange.withOpacity(.15);
+    if (s.contains('accept') || s.contains('assigned') || s.contains('pending')) {
+      return const Color(0xFFEEF2FF);
     }
-    if (s.contains('cancel')) return Colors.red.withOpacity(.15);
-    return Colors.grey.withOpacity(.15);
+    if (s.contains('cancel')) return const Color(0xFFFEF2F2);
+    return const Color(0xFFF8FAFC);
   }
 
   Color _fg() {
     final s = status.toLowerCase();
-    if (s.contains('done') || s.contains('delivered')) {
-      return Colors.green.shade800;
+    if (s.contains('done') || s.contains('delivered') || s.contains('complete')) {
+      return const Color(0xFF15803D);
     }
-    if (s.contains('route') || s.contains('enroute')) {
-      return Colors.blue.shade800;
+    if (s.contains('route') || s.contains('enroute') || s.contains('transit') || s.contains('active')) {
+      return const Color(0xFF1D4ED8);
     }
-    if (s.contains('accept') || s.contains('assigned')) {
-      return Colors.orange.shade800;
+    if (s.contains('accept') || s.contains('assigned') || s.contains('pending')) {
+      return const Color(0xFF4338CA);
     }
-    if (s.contains('cancel')) return Colors.red.shade800;
-    return Colors.grey.shade800;
+    if (s.contains('cancel')) return const Color(0xFFB91C1C);
+    return const Color(0xFF475569);
   }
 
   @override
@@ -240,21 +259,58 @@ class EmptyPlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.inbox_outlined, size: 48),
-            const Gap.h(12),
+            Container(
+              width: 84,
+              height: 84,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF2563EB).withOpacity(0.12),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.local_shipping_rounded,
+                size: 40,
+                color: Color(0xFF2563EB),
+              ),
+            ),
+            const SizedBox(height: 20),
             Text(
               title,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0F172A),
+                letterSpacing: -0.3,
+              ),
             ),
             if (message != null) ...[
-              const Gap.h(6),
-              Text(message!, textAlign: TextAlign.center),
+              const SizedBox(height: 8),
+              Text(
+                message!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF64748B),
+                  height: 1.4,
+                ),
+              ),
             ],
-            if (action != null) ...[const Gap.h(12), action!],
+            if (action != null) ...[
+              const SizedBox(height: 24),
+              action!,
+            ],
           ],
         ),
       ),
@@ -347,16 +403,19 @@ Future<bool> showConfirmDialog(
 // Logout helper (Firebase Auth)
 // ==============================
 Future<void> _logout(BuildContext context) async {
+  try {
+    await ApiService.I.logout();
+  } catch (_) {}
   await FirebaseAuth.instance.signOut();
   await Prefs.I.clearAll();
-  final roleVM = context.read<RoleViewModel>();
-  roleVM.clearRole();
-  if (!context.mounted) return;
-  Navigator.pushNamedAndRemoveUntil(
-    context,
-    NavRoutes.signIn,
-    (route) => false,
-  );
+  if (context.mounted) {
+    context.read<RoleViewModel>().clearRole();
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      NavRoutes.signIn,
+      (route) => false,
+    );
+  }
 }
 
 /// ===================================================================
@@ -511,54 +570,206 @@ class _HeaderCard extends StatelessWidget {
     final parts = s.trim().split(RegExp(r'\s+'));
     if (parts.isEmpty) return 'U';
     if (parts.length == 1) return parts.first.characters.first.toUpperCase();
-    return (parts.first.characters.first + parts.last.characters.first)
-        .toUpperCase();
+    return (parts.first.characters.first + parts.last.characters.first).toUpperCase();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Card(
-        color: cs.secondaryContainer,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              SmartAvatar(
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFEFF6FF), Color(0xFFDBEAFE)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFBFDBFE)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2563EB).withOpacity(0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(2),
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [Color(0xFF3D5AFE), Color(0xFF2563EB)],
+                ),
+              ),
+              child: SmartAvatar(
                 url: avatarUrl,
                 fallbackInitials: _initials(title),
                 radius: 24,
               ),
-              const Gap.w(12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  if (subtitle != null && subtitle!.isNotEmpty) ...[
+                    const SizedBox(height: 2),
                     Text(
-                      title,
+                      subtitle!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF475569),
                       ),
                     ),
-                    if (subtitle != null && subtitle!.isNotEmpty)
+                  ],
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Color(0xFF2563EB)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerNavTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final VoidCallback onTap;
+  final bool isSelected;
+
+  const _DrawerNavTile({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+    this.isSelected = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+      decoration: BoxDecoration(
+        color: isSelected ? const Color(0xFFEFF6FF) : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+        leading: Icon(
+          icon,
+          color: isSelected ? const Color(0xFF2563EB) : const Color(0xFF475569),
+          size: 22,
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+            fontSize: 14,
+            color: isSelected ? const Color(0xFF2563EB) : const Color(0xFF0F172A),
+          ),
+        ),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _SignOutCard extends StatelessWidget {
+  const _SignOutCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFECDD3)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () async {
+            final confirm = await showConfirmDialog(
+              context,
+              title: 'Log out',
+              message: 'Are you sure you want to log out of your account?',
+              confirmText: 'Log out',
+            );
+            if (confirm && context.mounted) {
+              await _logout(context);
+            }
+          },
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEE2E2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.logout_rounded,
+                    color: Color(0xFFDC2626),
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       Text(
-                        subtitle!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        'SIGN OUT',
                         style: TextStyle(
-                          color: cs.onSecondaryContainer.withOpacity(.8),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFFDC2626),
+                          letterSpacing: 0.5,
                         ),
                       ),
-                  ],
+                      SizedBox(height: 2),
+                      Text(
+                        'Log out of account',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF991B1B),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 14,
+                  color: Color(0xFFDC2626),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -580,55 +791,57 @@ class CustomerDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final currentRoute = ModalRoute.of(context)?.settings.name;
 
     return Drawer(
+      backgroundColor: Colors.white,
       child: SafeArea(
-        child: ListView(
-          padding: EdgeInsets.zero,
+        child: Column(
           children: [
             InkWell(
               onTap: () => _go(context, NavRoutes.profile),
               child: const _ProfileHeader(roleLabelFallback: 'Customer'),
             ),
-            const Divider(height: 8),
-            ListTile(
-              leading: Icon(Icons.home_outlined, color: cs.onSurfaceVariant),
-              title: const Text('Home'),
-              onTap: () => _go(context, NavRoutes.homePage),
-            ),
-            ListTile(
-              leading: Icon(
-                Icons.add_location_alt_outlined,
-                color: cs.onSurfaceVariant,
+            const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  _DrawerNavTile(
+                    icon: Icons.home_rounded,
+                    title: 'Home',
+                    isSelected: currentRoute == NavRoutes.homePage,
+                    onTap: () => _go(context, NavRoutes.homePage),
+                  ),
+                  _DrawerNavTile(
+                    icon: Icons.add_location_alt_rounded,
+                    title: 'New Delivery',
+                    isSelected: currentRoute == NavRoutes.book,
+                    onTap: () => _go(context, NavRoutes.book),
+                  ),
+                  _DrawerNavTile(
+                    icon: Icons.event_note_rounded,
+                    title: 'Scheduled Deliveries',
+                    isSelected: currentRoute == NavRoutes.schedule,
+                    onTap: () => _go(context, NavRoutes.schedule),
+                  ),
+                ],
               ),
-              title: const Text('New Delivery'),
-              onTap: () => _go(context, NavRoutes.book),
             ),
-            ListTile(
-              leading: Icon(
-                Icons.list_alt_outlined,
-                color: cs.onSurfaceVariant,
+            const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+            const _SignOutCard(),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text(
+                'CargoMate v3.0 • Secure Fleet',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF94A3B8),
+                ),
               ),
-              title: const Text('My Deliveries'),
-              onTap: () => _go(context, NavRoutes.myDeliveries),
             ),
-            const Divider(height: 16),
-            ListTile(
-              leading: Icon(Icons.logout, color: cs.error),
-              title: const Text('Logout'),
-              onTap: () async {
-                final confirm = await showConfirmDialog(
-                  context,
-                  title: 'Logout',
-                  message: 'Are you sure you want to log out?',
-                );
-                if (confirm) {
-                  await _logout(context);
-                }
-              },
-            ),
-            const Gap.h(8),
           ],
         ),
       ),
@@ -636,9 +849,6 @@ class CustomerDrawer extends StatelessWidget {
   }
 }
 
-/// ==============================
-/// Driver Drawer (classic Drawer)
-/// ==============================
 class DriverDrawer extends StatelessWidget {
   const DriverDrawer({super.key});
 
@@ -650,42 +860,162 @@ class DriverDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final currentRoute = ModalRoute.of(context)?.settings.name;
 
     return Drawer(
+      backgroundColor: Colors.white,
       child: SafeArea(
-        child: ListView(
-          padding: EdgeInsets.zero,
+        child: Column(
           children: [
             InkWell(
               onTap: () => _go(context, NavRoutes.profile),
               child: const _ProfileHeader(roleLabelFallback: 'Driver'),
             ),
-            const Divider(height: 8),
-            ListTile(
-              leading: Icon(Icons.home_outlined, color: cs.onSurfaceVariant),
-              title: const Text('Driver Home'),
-              onTap: () => _go(context, NavRoutes.driverHome),
+            const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  _DrawerNavTile(
+                    icon: Icons.local_shipping_rounded,
+                    title: 'Driver Home',
+                    isSelected: currentRoute == NavRoutes.driverHome,
+                    onTap: () => _go(context, NavRoutes.driverHome),
+                  ),
+                ],
+              ),
             ),
-            const Divider(height: 16),
-            ListTile(
-              leading: Icon(Icons.logout, color: cs.error),
-              title: const Text('Logout'),
-              onTap: () async {
-                final confirm = await showConfirmDialog(
-                  context,
-                  title: 'Logout',
-                  message: 'Are you sure you want to log out?',
-                );
-                if (confirm) {
-                  await _logout(context);
-                }
-              },
+            const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+            const _SignOutCard(),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text(
+                'CargoMate v3.0 • Driver Terminal',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF94A3B8),
+                ),
+              ),
             ),
-            const Gap.h(8),
           ],
         ),
       ),
+    );
+  }
+}
+
+class DeliveriesNavIcon extends StatelessWidget {
+  final bool selected;
+  final bool isDriver;
+  const DeliveriesNavIcon({super.key, required this.selected, this.isDriver = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final baseIcon = isDriver
+        ? Icon(selected ? Icons.space_dashboard_rounded : Icons.space_dashboard_outlined, color: selected ? const Color(0xFF1565C0) : null)
+        : Icon(selected ? Icons.access_time_filled : Icons.access_time);
+
+    if (uid == null) {
+      return baseIcon;
+    }
+
+    final query = isDriver
+        ? FirebaseFirestore.instance
+            .collection('deliveries')
+            .where('driver_id', isEqualTo: uid)
+            .snapshots()
+        : FirebaseFirestore.instance
+            .collection('deliveries')
+            .where('sender_id', isEqualTo: uid)
+            .snapshots();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: query,
+      builder: (context, snap) {
+        if (!snap.hasData) return baseIcon;
+
+        final docs = snap.data!.docs;
+        int activeCount = 0;
+        bool hasDriverMessage = false;
+
+        for (final doc in docs) {
+          final data = doc.data() as Map<String, dynamic>;
+          final status = (data['status'] ?? '').toString().toLowerCase();
+          final isFinished = status == 'delivered' || status == 'completed' || status == 'cancelled';
+          if (!isFinished) {
+            activeCount++;
+            final unread = data['has_unread_driver_msg'] == true ||
+                data['unread_msg'] == true ||
+                (data['unread_driver_count'] != null && (data['unread_driver_count'] as num) > 0);
+            if (unread) {
+              hasDriverMessage = true;
+            }
+          }
+        }
+
+        if (activeCount == 0) {
+          return baseIcon;
+        }
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            baseIcon,
+            Positioned(
+              right: -8,
+              top: -6,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (hasDriverMessage) ...[
+                    Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: Colors.amber,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.notifications_active_rounded,
+                        size: 11,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                  ],
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEF4444),
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFEF4444).withOpacity(0.4),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                    child: Text(
+                      '$activeCount',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        height: 1.1,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -699,63 +1029,110 @@ class MainBottomNav extends StatelessWidget {
 
   const MainBottomNav({super.key, required this.currentRoute});
 
-  int _indexForRoute(String? route) {
-    switch (route) {
-      case NavRoutes.homePage:
-        return 0;
-      case NavRoutes.myDeliveries: // ← use your actual deliveries route
-        return 1;
-      case NavRoutes.profile:
-        return 2;
-      default:
-        return 0;
+  int _indexForRoute(String? route, bool isDriver) {
+    if (isDriver) {
+      switch (route) {
+        case NavRoutes.driverHome:
+          return 0;
+        case NavRoutes.profile:
+          return 1;
+        default:
+          return 0;
+      }
+    } else {
+      switch (route) {
+        case NavRoutes.homePage:
+          return 0;
+        case NavRoutes.myDeliveries:
+        case NavRoutes.deliveries:
+          return 1;
+        case NavRoutes.profile:
+          return 2;
+        default:
+          return 0;
+      }
     }
   }
 
-  void _onTap(BuildContext context, int i) {
+  void _onTap(BuildContext context, int i, bool isDriver) {
     String target;
-    switch (i) {
-      case 0:
-        target = NavRoutes.homePage;
-        break;
-      case 1:
-        target = NavRoutes.myDeliveries; // ← make sure this matches your router
-        break;
-      case 2:
-        target = NavRoutes.profile;
-        break;
-      default:
-        target = NavRoutes.homePage;
+    if (isDriver) {
+      switch (i) {
+        case 0:
+          target = NavRoutes.driverHome;
+          break;
+        case 1:
+          target = NavRoutes.profile;
+          break;
+        default:
+          target = NavRoutes.driverHome;
+      }
+    } else {
+      switch (i) {
+        case 0:
+          target = NavRoutes.homePage;
+          break;
+        case 1:
+          target = NavRoutes.myDeliveries;
+          break;
+        case 2:
+          target = NavRoutes.profile;
+          break;
+        default:
+          target = NavRoutes.homePage;
+      }
     }
 
     // Avoid pushing the same route again
-    if (ModalRoute.of(context)?.settings.name == target) return;
+    final current = ModalRoute.of(context)?.settings.name;
+    if (current == target) return;
+    if (current == NavRoutes.homePage && target == NavRoutes.driverHome) return;
+    if (current == NavRoutes.driverHome && target == NavRoutes.homePage) return;
+
     Navigator.pushNamed(context, target);
   }
 
   @override
   Widget build(BuildContext context) {
-    final idx = _indexForRoute(currentRoute);
+    final roleVm = context.watch<RoleViewModel?>();
+    final role = (roleVm?.role ?? 'customer').toLowerCase();
+    final isDriver = role.contains('driver') || role.contains('bike');
+    final idx = _indexForRoute(currentRoute, isDriver);
+
     return NavigationBar(
       selectedIndex: idx,
-      onDestinationSelected: (i) => _onTap(context, i),
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.home_outlined),
-          selectedIcon: Icon(Icons.home),
-          label: 'Home',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.access_time),
-          selectedIcon: Icon(Icons.access_time_filled),
-          label: 'Deliveries',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.person_outline),
-          selectedIcon: Icon(Icons.person),
-          label: 'Account',
-        ),
-      ],
+      onDestinationSelected: (i) => _onTap(context, i, isDriver),
+      indicatorColor: isDriver ? const Color(0xFFDBEAFE) : null,
+      destinations: isDriver
+          ? [
+              NavigationDestination(
+                icon: DeliveriesNavIcon(selected: false, isDriver: true),
+                selectedIcon: DeliveriesNavIcon(selected: true, isDriver: true),
+                label: 'Jobs',
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.person_outline_rounded),
+                selectedIcon: Icon(Icons.person_rounded, color: Color(0xFF1565C0)),
+                label: 'Account',
+              ),
+            ]
+          : [
+              const NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home_rounded),
+                label: 'Home',
+              ),
+              const NavigationDestination(
+                icon: DeliveriesNavIcon(selected: false),
+                selectedIcon: DeliveriesNavIcon(selected: true),
+                label: 'Deliveries',
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.person_outline_rounded),
+                selectedIcon: Icon(Icons.person_rounded),
+                label: 'Account',
+              ),
+            ],
     );
   }
 }
@@ -793,6 +1170,92 @@ class AppScaffold extends StatelessWidget {
       bottomNavigationBar: bottomNavigationBar,
       floatingActionButton: floatingActionButton,
       floatingActionButtonLocation: floatingActionButtonLocation,
+    );
+  }
+}
+
+// ============================================
+// Interactive Full Screen Image Viewer Modal
+// ============================================
+class FullScreenImageViewer extends StatelessWidget {
+  final String imageUrl;
+  final String title;
+
+  const FullScreenImageViewer({
+    super.key,
+    required this.imageUrl,
+    this.title = 'Image Preview',
+  });
+
+  static void show(BuildContext context, String imageUrl, {String title = 'Image Preview'}) {
+    if (imageUrl.trim().isEmpty) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FullScreenImageViewer(imageUrl: imageUrl, title: title),
+      ),
+    );
+  }
+
+  Widget _buildImage() {
+    final cleanUrl = imageUrl.trim();
+    if (cleanUrl.startsWith('data:')) {
+      try {
+        final base64Data = cleanUrl.split(',').last;
+        return Image.memory(
+          base64Decode(base64Data),
+          fit: BoxFit.contain,
+        );
+      } catch (_) {}
+    }
+    return Image.network(
+      cleanUrl,
+      fit: BoxFit.contain,
+      loadingBuilder: (ctx, child, progress) {
+        if (progress == null) return child;
+        return const Center(
+          child: CircularProgressIndicator(color: Color(0xFF2563EB)),
+        );
+      },
+      errorBuilder: (_, err, stack) => const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.broken_image_rounded, color: Colors.white54, size: 48),
+            SizedBox(height: 8),
+            Text('Could not load image preview', style: TextStyle(color: Colors.white70)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0F172A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0F172A),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          title,
+          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          panEnabled: true,
+          boundaryMargin: const EdgeInsets.all(20),
+          minScale: 0.8,
+          maxScale: 4.0,
+          child: _buildImage(),
+        ),
+      ),
     );
   }
 }

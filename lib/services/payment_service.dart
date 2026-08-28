@@ -5,6 +5,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -56,8 +57,9 @@ class CargomatePaystack {
   static String get _redirectUrl => '$_callbackScheme://$_callbackHost';
 
   static Future<({String authorizationUrl, String reference})> _initOnServer({
-    required String email,
-    required double amount,
+    String? deliveryId,
+    String? email,
+    double? amount,
     String currency = 'GHS',
     Map<String, dynamic>? metadata,
   }) async {
@@ -68,68 +70,90 @@ class CargomatePaystack {
       if (token != null && token.isNotEmpty) HttpHeaders.authorizationHeader: 'Bearer $token',
     };
 
+    final Map<String, dynamic> body = {};
+    if (deliveryId != null && deliveryId.isNotEmpty) {
+      body['delivery_id'] = deliveryId;
+    }
+    if (email != null && email.isNotEmpty) body['email'] = email;
+    if (amount != null && amount > 0) body['amount'] = amount;
+    body['currency'] = currency;
+    if (metadata != null) body['metadata'] = metadata;
+    body['redirect_url'] = _redirectUrl;
+
     final resp = await http.post(
       uri,
       headers: headers,
-      body: jsonEncode({
-        'email': email,
-        'amount': amount,
-        'currency': currency,
-        'metadata': metadata ?? {},
-        'redirect_url': _redirectUrl,
-      }),
+      body: jsonEncode(body),
     );
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw Exception('Payment initiation failed: ${resp.statusCode} ${resp.body}');
     }
     final obj = jsonDecode(resp.body) as Map<String, dynamic>;
-    final authUrl = obj['authorization_url']?.toString() ?? obj['checkout_url']?.toString();
+    final authUrl = obj['checkout_url']?.toString() ?? obj['authorization_url']?.toString();
     final ref = obj['reference']?.toString();
 
     if (authUrl == null || ref == null) {
-      throw Exception('Payment gateway missing authorization_url or reference');
+      throw Exception('Payment gateway missing checkout_url or reference');
     }
     return (authorizationUrl: authUrl, reference: ref);
   }
 
   static Future<PayResult> charge({
     required BuildContext context,
-    required double amount,
-    required String currency,
-    String email = 'customer@example.com',
+    String? deliveryId,
+    double? amount,
+    String currency = 'GHS',
+    String? email,
     Map<String, dynamic>? metadata,
   }) async {
     _publicKey; // sanity check
 
+    final user = FirebaseAuth.instance.currentUser;
+    final String validEmail = (email != null && email.trim().isNotEmpty && email.contains('@'))
+        ? email.trim()
+        : ((user?.email != null && user!.email!.isNotEmpty && user.email!.contains('@'))
+            ? user.email!
+            : 'customer_${user?.uid ?? "app"}@cargomate.com');
+
+    final double validAmount = (amount == null || amount <= 0) ? 1.0 : amount;
+
     ({String authorizationUrl, String reference})? init;
     try {
       init = await _initOnServer(
-        email: email,
-        amount: amount,
+        deliveryId: deliveryId,
+        email: validEmail,
+        amount: validAmount,
         currency: currency,
         metadata: metadata,
       );
 
-      final callbackUrl = await FlutterWebAuth2.authenticate(
-        url: init.authorizationUrl,
-        callbackUrlScheme: _callbackScheme,
-      );
+      final String ref = init.reference;
 
-      final uri = Uri.parse(callbackUrl);
-      final refFromCallback =
-          uri.queryParameters['reference'] ?? uri.queryParameters['trxref'];
-      final reference = refFromCallback ?? init.reference;
+      // Launch Paystack checkout in web view
+      try {
+        final callbackUrl = await FlutterWebAuth2.authenticate(
+          url: init.authorizationUrl,
+          callbackUrlScheme: _callbackScheme,
+        );
 
-      return PayResult(ok: true, reference: reference);
-    } on PlatformException catch (e) {
-      if (e.code == 'CANCELED' && init != null) {
+        final uri = Uri.parse(callbackUrl);
+        final refFromCallback =
+            uri.queryParameters['reference'] ?? uri.queryParameters['trxref'];
+        final finalRef = refFromCallback ?? ref;
+
+        return PayResult(ok: true, reference: finalRef);
+      } on PlatformException catch (e) {
+        // User closed browser view or canceled; verify if payment was settled on Paystack server anyway
+        final v = await verifyDelivery(reference: ref, deliveryId: deliveryId);
+        if (v.ok) {
+          return PayResult(ok: true, reference: ref);
+        }
         return PayResult(
           ok: false,
-          reference: init.reference,
-          message: 'CANCELED',
+          reference: ref,
+          message: e.code == 'CANCELED' ? 'CANCELED' : e.message,
         );
       }
-      return PayResult(ok: false, message: e.toString());
     } catch (e) {
       return PayResult(ok: false, message: e.toString());
     }

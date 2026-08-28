@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../widgets/widgets.dart';
+import '../../widgets/circular_selfie_camera.dart';
 import '../../routes/navRoutes.dart';
 import '../../services/prefs.dart';
 import '../../services/api_service.dart';
@@ -21,8 +23,10 @@ class SignUpScreen extends StatefulWidget {
 
 /// Lightweight country model (matches Sign In)
 class _Country {
-  final String name, iso2, dialCode, flag;
-  const _Country(this.name, this.iso2, this.dialCode, [this.flag = '']);
+  final String name, iso2, dialCode;
+  final String? flag;
+  // ignore: unused_element_parameter
+  const _Country(this.name, this.iso2, this.dialCode, [this.flag]);
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
@@ -76,27 +80,66 @@ class _SignUpScreenState extends State<SignUpScreen> {
     super.dispose();
   }
 
+  bool _didReadRouteRole = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_didReadRouteRole) {
+      _didReadRouteRole = true;
+      // Read role from route arguments (passed by OTP screen or previous route)
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is Map<String, dynamic>) {
+        final passedRole = (args['role'] as String?)?.trim().toLowerCase();
+        if (passedRole != null && passedRole.isNotEmpty) {
+          setState(() => _role = passedRole);
+        }
+      } else if (args is String && args.isNotEmpty) {
+        final passedRole = args.trim().toLowerCase();
+        if (passedRole.isNotEmpty) {
+          setState(() => _role = passedRole);
+        }
+      }
+    }
+  }
+
   Future<void> _pickAndUploadAsset({
     required String purpose,
     ImageSource source = ImageSource.gallery,
   }) async {
-    final picker = ImagePicker();
-    final image = await picker.pickImage(
-      source: source,
-      imageQuality: 85,
-      maxWidth: 1200,
-    );
-    if (image == null) return;
+    File? fileToUpload;
+    String fileName = 'file_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    if (purpose == 'selfie') {
+      final captured = await CircularSelfieCamera.show(
+        context,
+        title: 'Live Driver Facial Selfie',
+        hintText: 'Center your face inside the circle',
+      );
+      if (captured == null) return;
+      fileToUpload = captured;
+      fileName = 'selfie_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    } else {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: 1200,
+      );
+      if (image == null) return;
+      fileToUpload = File(image.path);
+      fileName = image.name;
+    }
 
     setState(() => _isUploadingAsset = true);
     try {
-      final bytes = await image.readAsBytes();
+      final bytes = await fileToUpload.readAsBytes();
       final url = await ApiService.I.uploadAssetFile(
         bytes,
-        image.name,
+        fileName,
         purpose,
       );
-      final ext = image.name.split('.').last.toLowerCase();
+      final ext = fileName.split('.').last.toLowerCase();
       final mime = (ext == 'png') ? 'image/png' : 'image/jpeg';
       final dataUri = 'data:$mime;base64,${base64Encode(bytes)}';
       final finalUrl = url.isNotEmpty ? url : dataUri;
@@ -142,16 +185,22 @@ class _SignUpScreenState extends State<SignUpScreen> {
     if (picked != null) setState(() => _dob = picked);
   }
 
-  // Phone: enforce EXACTLY 9 digits
+  // Phone: enforce 9 digits after country code
   String? _validateLocalNumber(String? v) {
-    final s = (v ?? '').replaceAll(RegExp(r'\s+'), '');
+    var s = (v ?? '').replaceAll(RegExp(r'[^0-9]'), '');
     if (s.isEmpty) return 'Enter your phone number';
-    if (!RegExp(r'^[0-9]{9}$').hasMatch(s)) return 'Enter exactly 9 digits';
+    if (s.startsWith('0')) {
+      s = s.substring(1);
+    }
+    if (s.length != 9) return 'Enter 9 digits after country code';
     return null;
   }
 
   String get _fullE164 {
-    final local = _numberCtl.text.replaceAll(RegExp(r'[^0-9]'), '');
+    var local = _numberCtl.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (local.startsWith('0')) {
+      local = local.substring(1);
+    }
     return '+${_country.dialCode}$local';
   }
 
@@ -280,6 +329,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
     final phone = _fullE164;
     await Prefs.I.setPhone(phone);
+    await Prefs.I.setRole(_role);
     await Prefs.I.setLastDial(iso2: _country.iso2, dial: _country.dialCode);
 
     setState(() {
@@ -305,6 +355,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
               verificationId: verificationId,
               phone: phone,
               resendToken: resendToken,
+              role: _role,
             ),
           );
         },
@@ -368,13 +419,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
         setState(() => _currentStep = 1);
         return;
       }
-      if (_nationalIdCtl.text.trim().isEmpty) {
-        AppSnack.show(context, 'National ID number is required');
+      final natIdErr = _validateNationalId(_nationalIdCtl.text);
+      if (natIdErr != null) {
+        AppSnack.show(context, natIdErr);
         setState(() => _currentStep = 1);
         return;
       }
-      if (_licenseNumberCtl.text.trim().isEmpty) {
-        AppSnack.show(context, 'Driver license number is required');
+      final licErr = _validateDriverLicense(_licenseNumberCtl.text);
+      if (licErr != null) {
+        AppSnack.show(context, licErr);
         setState(() => _currentStep = 1);
         return;
       }
@@ -383,8 +436,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
         setState(() => _currentStep = 2);
         return;
       }
-      if (_licensePlateCtl.text.trim().isEmpty) {
-        AppSnack.show(context, 'Vehicle license plate number is required');
+      final plateErr = _validateLicensePlate(_licensePlateCtl.text);
+      if (plateErr != null) {
+        AppSnack.show(context, plateErr);
         setState(() => _currentStep = 2);
         return;
       }
@@ -435,6 +489,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
       await Prefs.I.setUid(user.uid);
       await Prefs.I.setPhone(phone);
+      await Prefs.I.setRoleForUser(user.uid, _role);
       await Prefs.I.setRole(_role);
       await Prefs.I.setHasProfile(true);
 
@@ -546,9 +601,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             keyboardType: TextInputType.phone,
                             inputFormatters: [
                               FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(
-                                9,
-                              ), // ✅ exactly 9 digits
+                              LengthLimitingTextInputFormatter(10),
                             ],
                             decoration: InputDecoration(
                               hintText: '24XXXXXXX',
@@ -742,14 +795,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             setState(() => _currentStep = 1);
                           }
                         },
-                        child: Text(
-                          _role == 'customer'
-                              ? 'Sign Up'
-                              : 'Next: Driver KYC (1/3)',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              _role == 'customer'
+                                  ? 'Sign Up'
+                                  : 'Continue to Driver KYC',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            if (_role != 'customer') ...[
+                              const SizedBox(width: 8),
+                              const Icon(Icons.arrow_forward_rounded, size: 18),
+                            ],
+                          ],
                         ),
                       ),
                     ),
@@ -1135,7 +1197,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     );
   }
 
-  // ---- STEP 1: DRIVER KYC & COMPLIANCE VIEW ----
+  // ---- STEP 1: DRIVER KYC & COMPLIANCE VIEW ------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
   Widget _buildStep1KycView() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1157,7 +1219,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
         // Avatar Upload Box
         const Text(
-          '1. Profile Photo (avatar_url)',
+          '1. Profile Photo',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
         ),
         const SizedBox(height: 6),
@@ -1234,7 +1296,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
         // Facial Selfie Box
         const Text(
-          '2. Live Driver Facial Selfie (driver_selfie_url)',
+          '2. Live Driver Facial Selfie',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
         ),
         const SizedBox(height: 6),
@@ -1311,35 +1373,44 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
         _filledField(
           controller: _nationalIdCtl,
-          label: 'National ID / Ghana Card Number (national_id)',
-          validator: (v) => (v == null || v.trim().isEmpty)
-              ? 'Enter National ID number'
-              : null,
+          label: 'National ID / ECOWAS Card Number',
+          capitalization: TextCapitalization.characters,
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9\-]')),
+            LengthLimitingTextInputFormatter(20),
+            TextInputFormatter.withFunction((_, newVal) => newVal.copyWith(text: newVal.text.toUpperCase())),
+          ],
+          validator: _validateNationalId,
         ),
         const SizedBox(height: 12),
         _filledField(
           controller: _licenseNumberCtl,
-          label: 'Driver License Number (license_number)',
-          validator: (v) => (v == null || v.trim().isEmpty)
-              ? 'Enter driver license number'
-              : null,
+          label: 'Driver License Number (e.g. DL-12345678)',
+          capitalization: TextCapitalization.characters,
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9\-]')),
+            LengthLimitingTextInputFormatter(18),
+            TextInputFormatter.withFunction((_, newVal) => newVal.copyWith(text: newVal.text.toUpperCase())),
+          ],
+          validator: _validateDriverLicense,
         ),
         const SizedBox(height: 20),
 
         Row(
           children: [
             Expanded(
-              child: OutlinedButton(
+              child: OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 onPressed: () => setState(() => _currentStep = 0),
-                child: const Text('⬅ Back'),
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                label: const Text('Back'),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: FilledButton(
+              child: FilledButton.icon(
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   backgroundColor: const Color(0xFF3D5AFE),
@@ -1356,18 +1427,21 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     AppSnack.show(context, 'Please capture live selfie first.');
                     return;
                   }
-                  if (_nationalIdCtl.text.trim().isEmpty ||
-                      _licenseNumberCtl.text.trim().isEmpty) {
-                    AppSnack.show(
-                      context,
-                      'Enter National ID & License number.',
-                    );
+                  final natErr = _validateNationalId(_nationalIdCtl.text);
+                  if (natErr != null) {
+                    AppSnack.show(context, natErr);
+                    return;
+                  }
+                  final licErr = _validateDriverLicense(_licenseNumberCtl.text);
+                  if (licErr != null) {
+                    AppSnack.show(context, licErr);
                     return;
                   }
                   setState(() => _currentStep = 2);
                 },
-                child: const Text(
-                  'Next: Vehicle (2/3)',
+                icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                label: const Text(
+                  'Continue to Vehicle Specs',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
@@ -1436,8 +1510,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
         _filledField(
           controller: _licensePlateCtl,
           label: 'Registration License Plate (e.g. GW-9821-25)',
-          validator: (v) =>
-              (v == null || v.trim().isEmpty) ? 'Enter license plate' : null,
+          capitalization: TextCapitalization.characters,
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9\-]')),
+            LengthLimitingTextInputFormatter(12),
+            TextInputFormatter.withFunction((_, newVal) => newVal.copyWith(text: newVal.text.toUpperCase())),
+          ],
+          validator: _validateLicensePlate,
         ),
         const SizedBox(height: 16),
 
@@ -1547,23 +1626,25 @@ class _SignUpScreenState extends State<SignUpScreen> {
         Row(
           children: [
             Expanded(
-              child: OutlinedButton(
+              child: OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 onPressed: () => setState(() => _currentStep = 1),
-                child: const Text('⬅ Back'),
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                label: const Text('Back'),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: FilledButton(
+              child: FilledButton.icon(
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   backgroundColor: const Color(0xFF059669),
                 ),
                 onPressed: _complete,
-                child: const Text(
+                icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                label: const Text(
                   'Submit Driver Profile',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
@@ -1588,17 +1669,58 @@ class _SignUpScreenState extends State<SignUpScreen> {
     );
   }
 
+  String? _validateNationalId(String? v) {
+    final s = (v ?? '').trim().toUpperCase();
+    if (s.isEmpty) return 'Enter National ID / ECOWAS Card Number';
+    if (s.length < 6 || s.length > 20) {
+      return 'National ID must be between 6 and 20 characters';
+    }
+    final idRegExp = RegExp(r'^[A-Z0-9\-]+$');
+    if (!idRegExp.hasMatch(s)) {
+      return 'National ID can only contain letters, numbers, and dashes';
+    }
+    return null;
+  }
+
+  String? _validateDriverLicense(String? v) {
+    final s = (v ?? '').trim().toUpperCase();
+    if (s.isEmpty) return 'Enter Driver License Number';
+    if (s.length < 6 || s.length > 18) {
+      return 'License number must be between 6 and 18 characters';
+    }
+    final licenseRegExp = RegExp(r'^[A-Z0-9\-]+$');
+    if (!licenseRegExp.hasMatch(s)) {
+      return 'License number can only contain letters, numbers, and dashes';
+    }
+    return null;
+  }
+
+  String? _validateLicensePlate(String? v) {
+    final s = (v ?? '').trim().toUpperCase();
+    if (s.isEmpty) return 'Enter License Plate Number';
+    if (s.length < 4 || s.length > 12) {
+      return 'License plate must be between 4 and 12 characters';
+    }
+    final plateRegExp = RegExp(r'^[A-Z0-9\-]+$');
+    if (!plateRegExp.hasMatch(s)) {
+      return 'Invalid plate format (e.g. GW-9821-25)';
+    }
+    return null;
+  }
+
   Widget _filledField({
     required TextEditingController controller,
     required String label,
     TextCapitalization capitalization = TextCapitalization.none,
     TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
     String? Function(String?)? validator,
   }) {
     return TextFormField(
       controller: controller,
       textCapitalization: capitalization,
       keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
       decoration: _filledDecoration(label),
       validator: validator,
     );

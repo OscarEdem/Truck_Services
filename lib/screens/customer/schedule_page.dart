@@ -22,12 +22,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     return AppScaffold(
-      title: 'Scheduled deliveries',
+      title: 'Scheduled Deliveries',
       actions: [
         IconButton(
           tooltip: 'New schedule',
           onPressed: () => _openCreateSheet(context),
-          icon: const Icon(Icons.add_circle_outline),
+          icon: const Icon(Icons.add_rounded, color: Colors.white, size: 24),
         ),
       ],
       body: uid == null
@@ -231,8 +231,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (_) => const _CreateScheduleSheet(),
     );
@@ -331,128 +332,351 @@ class _CreateScheduleSheetState extends State<_CreateScheduleSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final pad = MediaQuery.of(context).viewInsets.bottom + 16.0;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(16, 12, 16, pad),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('New schedule', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _pickupCtrl,
-            decoration: InputDecoration(
-              labelText: 'Pickup',
-              prefixIcon: const Icon(Icons.my_location),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.map_outlined),
-                onPressed: () => _pick(context, true),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _dropCtrl,
-            decoration: InputDecoration(
-              labelText: 'Dropoff',
-              prefixIcon: const Icon(Icons.location_on_outlined),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.map_outlined),
-                onPressed: () => _pick(context, false),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: _VehicleChips(
-                  value: _vehicle,
-                  onChanged: (v) => setState(() => _vehicle = v),
+    final pad = MediaQuery.of(context).viewInsets.bottom + 20.0;
+    final hasPickup = _pickupCtrl.text.trim().isNotEmpty;
+    final hasDrop = _dropCtrl.text.trim().isNotEmpty;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, pad),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Handle Bar
+            Center(
+              child: Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE2E8F0),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.access_time),
-                  label: Text(
-                    _when == null ? 'Pick date & time' : _pretty(_when!),
+            ),
+            const SizedBox(height: 16),
+
+            // Header Title
+            const Text(
+              'New Schedule',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0F172A),
+                letterSpacing: -0.3,
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // ---------- ROUTE CARD ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
+                children: [
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2563EB).withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF2563EB),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Container(width: 2, height: 24, color: const Color(0xFF93C5FD)),
+                      const SizedBox(height: 2),
+                      Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF4F46E5).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF4F46E5),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  onPressed: () async {
-                    final now = DateTime.now();
-                    final d = await showDatePicker(
-                      context: context,
-                      initialDate: now.add(const Duration(days: 1)),
-                      firstDate: now,
-                      lastDate: now.add(const Duration(days: 365)),
-                    );
-                    if (d == null) return;
-                    final t = await showTimePicker(
-                      context: context,
-                      initialTime: const TimeOfDay(hour: 9, minute: 0),
-                    );
-                    if (t == null) return;
-                    setState(
-                      () => _when = DateTime(
-                        d.year,
-                        d.month,
-                        d.day,
-                        t.hour,
-                        t.minute,
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: 8),
-              DropdownButton<ScheduleRepeat>(
-                value: _repeat,
-                onChanged: (v) => setState(() => _repeat = v!),
-                items: ScheduleRepeat.values
-                    .map(
-                      (r) => DropdownMenuItem(
-                        value: r,
-                        child: Text(r.name.toUpperCase()),
-                      ),
-                    )
-                    .toList(),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.attach_money),
-                  label: const Text('Estimate'),
-                  onPressed: _estimate,
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (_quote != null)
-                Text(
-                  _quote!.formatGHS(),
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: _saving ? null : _save,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(_saving ? 'Saving…' : 'Save schedule'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        InkWell(
+                          onTap: () => _pick(context, true),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'PICKUP',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF2563EB),
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                hasPickup ? _pickupCtrl.text : 'Tap to select pickup',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: hasPickup ? FontWeight.w700 : FontWeight.w500,
+                                  color: hasPickup ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Divider(height: 12, thickness: 1, color: Color(0xFFE2E8F0)),
+                        InkWell(
+                          onTap: () => _pick(context, false),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'DROPOFF',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF4F46E5),
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                hasDrop ? _dropCtrl.text : 'Tap to select dropoff',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: hasDrop ? FontWeight.w700 : FontWeight.w500,
+                                  color: hasDrop ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+
+            const SizedBox(height: 16),
+
+            // ---------- VEHICLE SELECTION ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+            _VehicleChips(
+              value: _vehicle,
+              onChanged: (v) => setState(() {
+                _vehicle = v;
+                _estimate();
+              }),
+            ),
+
+            const SizedBox(height: 16),
+
+            // ---------- DATE & TIME PICKER ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+            InkWell(
+              onTap: () async {
+                final now = DateTime.now();
+                final d = await showDatePicker(
+                  context: context,
+                  initialDate: now.add(const Duration(days: 1)),
+                  firstDate: now,
+                  lastDate: now.add(const Duration(days: 365)),
+                );
+                if (d == null) return;
+                if (!context.mounted) return;
+                final t = await showTimePicker(
+                  context: context,
+                  initialTime: const TimeOfDay(hour: 9, minute: 0),
+                );
+                if (t == null) return;
+                setState(
+                  () => _when = DateTime(d.year, d.month, d.day, t.hour, t.minute),
+                );
+              },
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.event_available_rounded, color: Color(0xFF2563EB), size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _when == null ? 'Select Date & Time' : _pretty(_when!),
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: _when != null ? FontWeight.w700 : FontWeight.w500,
+                          color: _when != null ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Color(0xFF94A3B8)),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // ---------- REPEAT FREQUENCY SEGMENTED PILLS ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+            const Text(
+              'Repeat Frequency',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: ScheduleRepeat.values.map((r) {
+                  final isSelected = _repeat == r;
+                  return GestureDetector(
+                    onTap: () => setState(() => _repeat = r),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isSelected ? const Color(0xFF2563EB) : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        r.name.toUpperCase(),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: isSelected ? Colors.white : const Color(0xFF64748B),
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+
+            if (_quote != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    const Text(
+                      'Estimated Fare',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1E40AF),
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      _quote!.formatGHS(),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF2563EB),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 24),
+
+            // ---------- SAVE CTA BUTTON ----------------------------------------------------------------------------------                                                                                                                                                                                #*eddiere
+            Container(
+              height: 50,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(25),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF3D5AFE), Color(0xFF2563EB)],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF2563EB).withOpacity(0.3),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ElevatedButton.icon(
+                onPressed: _saving ? null : _save,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(25),
+                  ),
+                ),
+                icon: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                label: Text(
+                  _saving ? 'SAVING...' : 'SAVE SCHEDULE',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -471,20 +695,49 @@ class _VehicleChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final opts = <(VehicleType, String, IconData)>[
-      (VehicleType.bike, 'Bike', Icons.pedal_bike),
-      (VehicleType.van, 'Van', Icons.local_shipping_outlined),
-      (VehicleType.truck, 'Truck', Icons.fire_truck),
+      (VehicleType.bike, 'Bike', Icons.two_wheeler_rounded),
+      (VehicleType.van, 'Van', Icons.local_shipping_rounded),
+      (VehicleType.truck, 'Truck', Icons.fire_truck_rounded),
     ];
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: opts.map((o) {
-        final (v, label, icon) = o;
-        return ChoiceChip.elevated(
-          selected: v == value,
-          onSelected: (_) => onChanged(v),
-          avatar: Icon(icon, size: 18),
-          label: Text(label),
+    return Row(
+      children: opts.map((opt) {
+        final type = opt.$1;
+        final name = opt.$2;
+        final icon = opt.$3;
+        final isSelected = value == type;
+
+        return Expanded(
+          child: GestureDetector(
+            onTap: () => onChanged(type),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFF2563EB) : const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    size: 18,
+                    color: isSelected ? Colors.white : const Color(0xFF64748B),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    name,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: isSelected ? Colors.white : const Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         );
       }).toList(),
     );
