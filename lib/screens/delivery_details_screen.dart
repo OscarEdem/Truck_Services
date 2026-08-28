@@ -42,6 +42,7 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
 
   // Live Driver Telemetry & Geofenced Arrival State
   StreamSubscription<Map<String, dynamic>>? _locationSub;
+  StreamSubscription<Position>? _deviceGpsSub;
   Timer? _pollTimer;
   gmaps.LatLng? _driverPos;
   double _driverHeading = 0.0;
@@ -52,6 +53,7 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
   @override
   void dispose() {
     _locationSub?.cancel();
+    _deviceGpsSub?.cancel();
     _pollTimer?.cancel();
     super.dispose();
   }
@@ -126,10 +128,20 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
           final full = await _fetchDeliveryById(idStr);
           if (full != null && mounted) {
             setState(() => d = Map<String, dynamic>.from(d)..addAll(full));
-            await _fitBoundsFlutterMap();
           }
         } catch (_) {}
       }
+      // Fetch driver vehicle if missing or viewing as driver
+      try {
+        final me = await ApiService.I.getMe();
+        final userObj = (me['user'] is Map) ? me['user'] as Map<String, dynamic> : me;
+        final driverV = userObj['vehicle_type'] ?? userObj['vehicle'] ?? userObj['vehicle_name'];
+        if (driverV != null && driverV.toString().isNotEmpty && mounted) {
+          setState(() {
+            d['driver_vehicle_type'] = driverV;
+          });
+        }
+      } catch (_) {}
 
       // 2. Geocoding fallback if coordinates are missing from backend delivery dict
       String cleanAddr(String raw) {
@@ -208,6 +220,63 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
         } catch (_) {}
       });
     }
+
+    // 3. Get driver's own device GPS position immediately
+    _initDeviceGps();
+  }
+
+  Future<void> _initDeviceGps() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return;
+      }
+      if (permission == LocationPermission.deniedForever) return;
+
+      // Immediate current position
+      final currentPos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      _processDriverTelemetry({
+        'latitude': currentPos.latitude,
+        'longitude': currentPos.longitude,
+        'heading': currentPos.heading,
+        'speed': currentPos.speed,
+      });
+
+      // Stream continuous device updates
+      _deviceGpsSub?.cancel();
+      _deviceGpsSub = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 3,
+        ),
+      ).listen((pos) {
+        _processDriverTelemetry({
+          'latitude': pos.latitude,
+          'longitude': pos.longitude,
+          'heading': pos.heading,
+          'speed': pos.speed,
+        });
+
+        final user = _auth.currentUser;
+        if (user != null) {
+          ApiService.I.sendLocationWebSocketPacket(
+            driverId: user.uid,
+            latitude: pos.latitude,
+            longitude: pos.longitude,
+            heading: pos.heading,
+            speed: pos.speed,
+          );
+        }
+      });
+    } catch (e) {
+      debugPrint('[DRIVER_GPS] Error initializing device GPS: $e');
+    }
   }
 
   void _processDriverTelemetry(Map<String, dynamic> data) {
@@ -236,7 +305,8 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
         final phaseName = isPickupPhase ? 'PICKUP LOCATION' : 'DROP-OFF LOCATION';
         etaStr = 'DRIVER IS ARRIVING AT $phaseName! (${distMeters.round()}m away)';
       } else {
-        final speedMps = speed > 0 ? speed : (35.0 * 1000 / 3600);
+        // Floor speed to ~28 km/h if stationary or low GPS jitter to prevent crazy ETAs like 180+ min
+        final speedMps = speed >= 2.5 ? speed : (28.0 * 1000 / 3600);
         final etaSecs = (distMeters / speedMps).round();
         final etaMins = (etaSecs / 60).ceil();
         final distKm = (distMeters / 1000).toStringAsFixed(1);
@@ -735,7 +805,26 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
       d['drop_lng'] ?? d['drop_longitude'] ?? d['dropLng'],
     );
     final priceText = _priceText(d);
-    final vehicle = (d['vehicle_type'] ?? d['vehicleType'] ?? d['vehicle'] ?? 'vehicle').toString();
+
+    final rawVehicle = (d['driver_vehicle_type'] ??
+            d['driver_vehicle'] ??
+            d['vehicle_type'] ??
+            d['vehicleType'] ??
+            d['vehicle'] ??
+            'TRUCK')
+        .toString()
+        .trim();
+
+    String cleanVehicle(String raw) {
+      final s = raw.toLowerCase();
+      if (s == 'trunk' || s == 'truck' || s == 'heavy_truck') return 'TRUCK';
+      if (s == 'van') return 'VAN';
+      if (s == 'bike' || s == 'motorcycle') return 'BIKE';
+      if (s.isEmpty || s == 'vehicle') return 'TRUCK';
+      return raw.toUpperCase();
+    }
+
+    final vehicle = cleanVehicle(rawVehicle);
     final status = (d['status'] ?? 'pending').toString();
     final bool isDriverForThis =
         (d['driver_id'] ?? d['driverId']) != null &&
@@ -794,8 +883,8 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
                                           : const gmaps.LatLng(5.6037, -0.1870)),
                                   zoom: 12,
                                 ),
-                                myLocationEnabled: false,
-                                myLocationButtonEnabled: false,
+                                myLocationEnabled: true,
+                                myLocationButtonEnabled: true,
                                 zoomControlsEnabled: false,
                                 onMapCreated: (controller) async {
                                   _gmapCtl = controller;
@@ -839,7 +928,7 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
                                       ),
                                       infoWindow: const gmaps.InfoWindow(title: 'Dropoff Location'),
                                     ),
-                                  if (_driverPos != null)
+                                  if (_driverPos != null && !isDriverForThis)
                                     gmaps.Marker(
                                       markerId: const gmaps.MarkerId('driver_vehicle_pin'),
                                       position: _driverPos!,

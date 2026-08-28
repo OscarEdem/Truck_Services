@@ -310,7 +310,11 @@ class ApiService {
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       if (data is Map && data.containsKey('deliveries')) {
-        return data['deliveries'] as List<dynamic>;
+        final rawList = data['deliveries'];
+        if (rawList is List) {
+          return rawList;
+        }
+        return [];
       }
       if (data is List) {
         return data;
@@ -319,6 +323,20 @@ class ApiService {
     } else {
       throw Exception('Failed to fetch deliveries list');
     }
+  }
+
+  String _buildWsUrl(String path) {
+    var raw = baseUrl.trim();
+    if (raw.startsWith('https://')) {
+      raw = 'wss://${raw.substring(8)}';
+    } else if (raw.startsWith('http://')) {
+      raw = 'ws://${raw.substring(7)}';
+    }
+    while (raw.endsWith('/')) {
+      raw = raw.substring(0, raw.length - 1);
+    }
+    final cleanPath = path.startsWith('/') ? path : '/$path';
+    return '$raw$cleanPath';
   }
 
   /// Fetches a single delivery order by ID
@@ -372,8 +390,7 @@ class ApiService {
   void startLocationWebSocket(String driverId) {
     try {
       _driverWsChannel?.sink.close();
-      final wsBaseUrl = baseUrl.replaceAll('http://', 'ws://').replaceAll('https://', 'wss://');
-      final wsUri = Uri.parse('$wsBaseUrl/driver/ws?driver_id=$driverId');
+      final wsUri = Uri.parse(_buildWsUrl('/driver/ws?driver_id=$driverId'));
       _driverWsChannel = WebSocketChannel.connect(wsUri);
       debugPrint('[WS_LOCATION] Driver WebSocket stream connected: $wsUri');
     } catch (e) {
@@ -419,8 +436,7 @@ class ApiService {
   Stream<Map<String, dynamic>> subscribeDeliveryLocationStream(String deliveryId) {
     final controller = StreamController<Map<String, dynamic>>.broadcast();
     try {
-      final wsBaseUrl = baseUrl.replaceAll('http://', 'ws://').replaceAll('https://', 'wss://');
-      final wsUri = Uri.parse('$wsBaseUrl/deliveries/$deliveryId/track/ws');
+      final wsUri = Uri.parse(_buildWsUrl('/deliveries/$deliveryId/track/ws'));
       final channel = WebSocketChannel.connect(wsUri);
 
       channel.stream.listen((data) {
